@@ -30,7 +30,6 @@ from config import (
     ACTUAL_SHEET_NAME,
     COL_ACTION,
     COL_APPT_DATE,
-    COL_APPT_ID,
     COL_APPT_TIME,
     COL_APPT_TYPE,
     COL_HAS_NEWER_ACTION,
@@ -43,6 +42,7 @@ from config import (
     COL_PN,
     COL_RESCHEDULE_DATE,
     COL_RESCHEDULE_INTO,
+    COL_RESCHEDULE_INTO_ALIASES,
     COL_RESCHEDULE_TIME,
     LOCATION_MAP,
     MAILCHIMP_EXPORT_PATH,
@@ -67,6 +67,7 @@ VALID_ACTIONS = (*ACTIONS_CREATE, *ACTIONS_RESCHEDULE, *ACTIONS_CANCEL, *ACTIONS
 # Alternate headers for "Has newer" column in different exports
 _HAS_NEWER_ALIASES = (
     "Has newer",
+    "Has newer Date",
     "Has Newer Action",
     "Has newer actions?",
 )
@@ -109,6 +110,15 @@ def _cell_value(row: Any, col: str, df_columns: list) -> Any:
 def _has_newer_value(row: Any, cols: list) -> Any:
     for alias in _HAS_NEWER_ALIASES:
         v = _cell_value(row, alias, cols)
+        if v is not None and not (isinstance(v, float) and pd.isna(v)) and str(v).strip():
+            return v
+    return None
+
+
+def _reschedule_into_value(row: Any, cols: list) -> Any:
+    """Reschedule text from Action row — tries primary column name then aliases (e.g. Reschedule Info)."""
+    for name in (COL_RESCHEDULE_INTO, *COL_RESCHEDULE_INTO_ALIASES):
+        v = _cell_value(row, name, cols)
         if v is not None and not (isinstance(v, float) and pd.isna(v)) and str(v).strip():
             return v
     return None
@@ -256,12 +266,11 @@ def _action_row_to_record(
         time_str = _parse_time(_cell_value(actual_row, at_col, acols))
         loc = _cell_value(actual_row, al_col, acols)
         appt_type = _cell_value(actual_row, aty_col, acols)
-        appt_id = _cell_value(actual_row, COL_APPT_ID, acols)
     else:
         base_date = _parse_date(_cell_value(row, COL_APPT_DATE, cols))
         base_time = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
         if use_reschedule_columns:
-            rinfo = _cell_value(row, COL_RESCHEDULE_INTO, cols)
+            rinfo = _reschedule_into_value(row, cols)
             nd, nt = parse_reschedule_into(rinfo)
             date_str = nd or _parse_date(_cell_value(row, COL_RESCHEDULE_DATE, cols)) or base_date
             time_str = nt or _parse_time(_cell_value(row, COL_RESCHEDULE_TIME, cols)) or base_time
@@ -270,19 +279,12 @@ def _action_row_to_record(
             time_str = base_time
         loc = _cell_value(row, COL_LOCATION, cols)
         appt_type = _cell_value(row, COL_APPT_TYPE, cols)
-        appt_id = _cell_value(row, COL_APPT_ID, cols)
 
     if not date_str:
         return None
 
     loc_code = (str(loc).strip().upper() if loc is not None and not (isinstance(loc, float) and pd.isna(loc)) else "LIB")
     location_address = LOCATION_MAP.get(loc_code) or loc_code
-
-    aid = appt_id
-    if aid is not None and not (isinstance(aid, float) and pd.isna(aid)):
-        appointment_id = str(aid).strip()
-    else:
-        appointment_id = None
 
     return {
         "pn": pn,
@@ -293,27 +295,57 @@ def _action_row_to_record(
         "location": loc_code,
         "location_address": location_address,
         "appt_type": str(appt_type).strip().upper() if appt_type is not None else "",
-        "appointment_id": appointment_id,
     }
 
 
-def _find_actual_row_for_pn(actual_df: pd.DataFrame, pn: str, appt_id: Any) -> Any | None:
-    """Find one row in actual sheet for this PN (and optional appointment id)."""
+def _find_actual_row_for_pn(
+    actual_df: pd.DataFrame,
+    pn: str,
+    *,
+    date_hint: str | None = None,
+    time_hint: str | None = None,
+) -> Any | None:
+    """
+    Find one row in the Actual sheet for this PN.
+
+    With multiple rows for the same PN, match **Date + Time** on Actual to the Action row’s
+    scheduled **Date** / **Time**. If no match, use the first PN row and log a warning.
+    """
     if actual_df is None or actual_df.empty:
         return None
     cols = list(actual_df.columns)
+    ad_col = _actual_column(ACTUAL_COL_DATE, COL_APPT_DATE)
+    at_col = _actual_column(ACTUAL_COL_TIME, COL_APPT_TIME)
+
+    matching: list[Any] = []
     for _, row in actual_df.iterrows():
         pn_val = _cell_value(row, COL_PN, cols)
         if pn_val is None:
             continue
         if _normalize_pn(pn_val) != pn:
             continue
-        if appt_id is not None and str(appt_id).strip():
-            aid = _cell_value(row, COL_APPT_ID, cols)
-            if aid is not None and str(aid).strip() == str(appt_id).strip():
-                return row
-        return row  # first PN match
-    return None
+        matching.append(row)
+
+    if not matching:
+        return None
+    if len(matching) == 1:
+        return matching[0]
+
+    # Multiple rows for this PN — match on scheduled date/time
+    if date_hint and time_hint:
+        for actual_row in matching:
+            d = _parse_date(_cell_value(actual_row, ad_col, cols))
+            t = _parse_time(_cell_value(actual_row, at_col, cols))
+            if d == date_hint and t == time_hint:
+                return actual_row
+
+    logger.warning(
+        "Actual sheet: %d rows for PN=%s; could not match Date+Time to Action row. "
+        "Using the first row. Prefer one current-appointment row per patient on Actual, or unique Date+Time per visit.",
+        len(matching),
+        pn,
+    )
+    return matching[0]
 
 
 def get_actions_to_process() -> list[dict[str, Any]]:
@@ -374,8 +406,14 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         need_actual_lookup = has_newer and action in (*ACTIONS_RESCHEDULE, *ACTIONS_CANCEL)
         actual_row = None
         if need_actual_lookup:
-            appt_id = _cell_value(row, COL_APPT_ID, cols)
-            actual_row = _find_actual_row_for_pn(actual_df, pn, appt_id)
+            date_hint = _parse_date(_cell_value(row, COL_APPT_DATE, cols))
+            time_hint = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
+            actual_row = _find_actual_row_for_pn(
+                actual_df,
+                pn,
+                date_hint=date_hint,
+                time_hint=time_hint,
+            )
             if actual_row is None:
                 continue  # cannot find appt in actual sheet -> skip (e.g. deleted)
 
@@ -426,9 +464,7 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         for item in rows_with_action:
             r = item["record"]
             a = item["action"]
-            if r.get("appointment_id"):
-                key = str(r["appointment_id"]).strip()
-            elif a == "reschedule" and r.get("original_appt_date") and r.get("original_appt_time"):
+            if a == "reschedule" and r.get("original_appt_date") and r.get("original_appt_time"):
                 key = f"{r.get('pn')}_{r['original_appt_date']}_{r['original_appt_time']}"
             else:
                 key = f"{r.get('pn')}_{r.get('appt_date')}_{r.get('appt_time')}"

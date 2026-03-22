@@ -62,13 +62,19 @@ COL_APPT_TIME = "Time"  # e.g. 04:30p, 11:30a
 COL_LOCATION = "Location"  # LIB | LIBN | LIBJ
 COL_APPT_TYPE = "Type"  # 30DN, MT50, PTDN, etc. (used for duration)
 COL_PATIENT_NAME = "Patient Name"  # "Last, First" — optional display only
-COL_APPT_ID = "Appointment ID"  # optional; if missing we key by PN + date + time
-# Production uses one text column for reschedule changes:
+# ICS / dedupe key = PN + Date + Time from exports (no separate appointment-id field in source data).
+# Production uses one text column for reschedule changes (aliases tried if empty):
 COL_RESCHEDULE_INTO = "Reschedule Into"
+# Comma-separated extra header names for the same reschedule text (e.g. "Reschedule Info")
+COL_RESCHEDULE_INTO_ALIASES: tuple[str, ...] = tuple(
+    x.strip()
+    for x in os.environ.get("COL_RESCHEDULE_INTO_ALIASES", "Reschedule Info").split(",")
+    if x.strip()
+)
 # Legacy / optional separate columns (used if Reschedule Into is empty):
 COL_RESCHEDULE_DATE = "Reschedule Date"
 COL_RESCHEDULE_TIME = "Reschedule Time"
-COL_HAS_NEWER_ACTION = "Has newer"  # Yes or blank (also matches "Has Newer Action" via case-insensitive lookup)
+COL_HAS_NEWER_ACTION = "Has newer"  # Yes or blank; aliases in excel_reader (e.g. "Has newer Date")
 
 # If the Actual sheet uses different headers for date/time, set these (empty = same as action columns):
 ACTUAL_COL_DATE = os.environ.get("ACTUAL_COL_DATE", "").strip() or None  # e.g. "Last Schedul"

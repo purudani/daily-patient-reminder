@@ -7,8 +7,8 @@ Automation that runs **daily at 8 PM** on your computer: reads appointment data 
 ## What the tool does (end-to-end)
 
 1. **Reads three data sources** (from your configured folder):
-   - **Action report** (Scheduler Activity Report style) – **Action** (`CREATE`, `RESCHEDULE`, `CANCEL w. remove`, `DELETE`, …), **PN**, **Date** / **Time** (`M/D/YYYY`, `04:30p`), **Type**, **Location**, **Reschedule Into** (single text with old→new date/time), **Has newer**, optional **Appointment ID**.
-   - **Actual report** – current appointment state; used when **Has newer** is Yes so reschedule/cancel can use the latest slot (or skip if missing / today per rules).
+   - **Action report** (Scheduler Activity Report style) – **Action** (`CREATE`, `RESCHEDULE`, `CANCEL w. remove`, `DELETE`, …), **PN**, **Date** / **Time** (`M/D/YYYY`, `04:30p`), **Type**, **Location**, **Reschedule Into** or **Reschedule Info** (same meaning), **Has newer** or **Has newer Date** (same meaning). Visits are keyed by **PN + Date + Time** (no separate ID column required).
+   - **Actual report** – current appointment state; used when **Has newer** is Yes so reschedule/cancel can use the latest slot (or skip if missing / today per rules). It does **not** need every column the Action sheet has (see below).
    - **Mailchimp export** – **PN**, **Email**, **First** / **Last** (or **Name**) for display name and sending.
 
 2. **Applies rules**:
@@ -131,11 +131,19 @@ Defaults match the **Scheduler Activity Report** style (Date/Time as `M/D/YYYY` 
 | Location | `COL_LOCATION` | `"Location"` |
 | Type (duration) | `COL_APPT_TYPE` | `"Type"` — e.g. `30DN`, `MT50` (see `APPOINTMENT_TYPE_DURATION_MINUTES`) |
 | Reschedule (production) | `COL_RESCHEDULE_INTO` | `"Reschedule Into"` — single text, e.g. `Time: 12:00p -> 10:00a` or `Date: ... -> ... Time: ... -> ...` |
+| Reschedule (alias) | `COL_RESCHEDULE_INTO_ALIASES` | Env: comma-separated extra names, default includes **`Reschedule Info`** if your export uses that header instead |
 | Legacy reschedule | `COL_RESCHEDULE_DATE` / `COL_RESCHEDULE_TIME` | Used only if `Reschedule Into` is empty |
-| Has newer | `COL_HAS_NEWER_ACTION` | `"Has newer"` — also matches `"Has Newer Action"` / `"Has newer actions?"` case-insensitively |
-| Appointment ID (optional) | `COL_APPT_ID` | `"Appointment ID"` |
+| Has newer | `COL_HAS_NEWER_ACTION` | `"Has newer"` — also matches **`Has newer Date`**, `"Has Newer Action"`, `"Has newer actions?"` (case-insensitive) |
 
 If the **Actual** tab uses different headers (e.g. `Last Schedul` for date), set env vars `ACTUAL_COL_DATE`, `ACTUAL_COL_TIME`, etc. (see `config.py`).
+
+#### How visits are keyed (ICS + dedupe)
+
+The app does **not** require an **Appointment ID** column. Each visit is identified by **PN + scheduled Date + Time** from the exports (for **reschedule**, the **original** date/time on the Action row is used so the same calendar invite is updated). That key is stored in `event_id_store.json` and used for “last wins” dedupe when the same visit appears on multiple rows.
+
+#### Why Actual doesn’t need “all” Action columns
+
+Action and Actual are **different reports**. Action carries **what changed** (create/reschedule/cancel, reschedule text, staff, “has newer”). Actual is only read for **current** PN / date / time / location / type when **Has newer** rules apply. Columns like **Reason**, **Comment**, or **User Name** are often **empty** or absent on Actual — that’s expected. Your screenshot’s **CHECK IN** / **CHECK OUT** rows are normal activity history; this job only sends mail for **CREATE / RESCHEDULE / CANCEL / DELETE** on the **Action** file’s Action column, not for check-in/out.
 
 **Mailchimp / audience export:**
 
@@ -264,7 +272,7 @@ To test without affecting real patients, use the dummy data generator and send a
 | **Reschedule** | Same **UID**, SEQUENCE+1, attach updated **invite.ics** | `POST .../sendMail` |
 | **Cancel** / **Delete** | Same **UID**, SEQUENCE+1, attach **cancel.ics**, remove row from store | `POST .../sendMail` |
 
-Appointment key = **Appointment ID** from the report if present, else **PN_Date_Time**. Clients that honor iCalendar updates will merge by **UID**; behavior can vary by app (Outlook, Gmail, Apple Calendar, etc.).
+Appointment key = **PN + Date + Time** (normalized). Clients that honor iCalendar updates will merge by **UID**; behavior can vary by app (Outlook, Gmail, Apple Calendar, etc.).
 
 **Migrating from Graph calendar:** Existing `event_id_store.json` rows with **`i_cal_uid`** from Outlook are still used as the ICS **UID** when you cancel, so cancellations may match the old Graph-sent invite when the UID matches.
 

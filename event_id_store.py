@@ -151,3 +151,28 @@ def get_all_keys() -> list[str]:
     with _lock:
         data = _load_unsafe()
     return list(data.keys())
+
+
+def resolve_store_key_for_cancel(pn: str, primary_key: str) -> str | None:
+    """
+    Resolve which store key to use for cancel/delete.
+
+    1. If ``primary_key`` (from Action Date/Time) exists in the store, use it.
+    2. Else, if exactly **one** key exists for this PN, use it (common when the Action row
+       shows the *new* time after a reschedule but the store is still keyed by the *original* slot).
+
+    If multiple keys exist for the same PN, returns None (ambiguous — align Date/Time on the
+    cancel row with the key in ``event_id_store.json``, or cancel one visit per run).
+    """
+    pn_s = str(pn or "").strip()
+    if get_invite_state(primary_key):
+        return primary_key
+    if not pn_s:
+        return None
+    prefix = f"{pn_s}_"
+    with _lock:
+        data = _load_unsafe()
+    matches = [k for k in data.keys() if str(k).startswith(prefix)]
+    if len(matches) == 1:
+        return matches[0]
+    return None

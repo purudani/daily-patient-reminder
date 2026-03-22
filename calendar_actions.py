@@ -15,7 +15,13 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from event_id_store import get_invite_state, remove_event, set_invite_state
+from event_id_store import (
+    get_all_keys,
+    get_invite_state,
+    remove_event,
+    resolve_store_key_for_cancel,
+    set_invite_state,
+)
 from graph_mail import send_mail_with_ics
 from graph_user import resolve_organizer_email
 from ics_calendar import build_ics_calendar, local_naive_to_utc, stable_ical_uid
@@ -126,9 +132,7 @@ def _build_cancel_html(*, display_when: str, website_url: str, phone: str) -> st
 
 
 def _appointment_key(record: dict[str, Any]) -> str:
-    key = record.get("appointment_id") or record.get("AppointmentID")
-    if key and str(key).strip():
-        return str(key).strip()
+    """Stable key for ICS UID store: PN + date + time (reschedule uses original_* from Action row)."""
     pn = record.get("pn") or record.get("PN") or record.get("PatientNumber") or ""
     date_part = record.get("original_appt_date") or record.get("appt_date") or record.get("ApptDate") or record.get("Date") or ""
     time_part = record.get("original_appt_time") or record.get("appt_time") or record.get("ApptTime") or record.get("Time") or ""
@@ -376,11 +380,27 @@ def do_cancel(
     log_action: str = "cancel",
 ) -> bool:
     _ = comment
-    key = _appointment_key(record)
-    state = get_invite_state(key)
-    if not state:
-        logger.warning("Cancel: no stored invite UID for key=%s; skipping", key)
+    row_key = _appointment_key(record)
+    pn = str(record.get("pn") or record.get("PN") or "").strip()
+    key = resolve_store_key_for_cancel(pn, row_key)
+    state = get_invite_state(key) if key else None
+    if not key or not state:
+        same_pn_keys = [k for k in get_all_keys() if pn and str(k).startswith(f"{pn}_")]
+        logger.warning(
+            "Cancel: no stored invite UID for row key=%s. Keys in store for PN=%s: %s. "
+            "After a reschedule, the store uses the **original** Date/Time; put that on the cancel "
+            "row, or keep only one open visit per PN. See event_id_store.json.",
+            row_key,
+            pn or "?",
+            same_pn_keys if same_pn_keys else "none",
+        )
         return False
+    if key != row_key:
+        logger.info(
+            "Cancel: using store key=%s (Action row keyed as %s — e.g. current vs original slot)",
+            key,
+            row_key,
+        )
 
     from config import CONFIRMATION_PHONE, LOCATION_MAP, WEBSITE_URL
 

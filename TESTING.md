@@ -17,27 +17,27 @@ If the script errors, ensure `pandas` and `openpyxl` are installed (`pip install
 
 ### Default (minimal) outputs
 
-In the project folder:
+The script creates **only the same three workbook types** you use in production:
 
 | File | Purpose |
 |------|---------|
 | **dummy_action_report.xlsx** | **3 rows**, one scenario each: CREATE, RESCHEDULE (Reschedule Into), RESCHEDULE + Has newer → **Actual** |
-| **dummy_actual_report.xlsx** | One **Actual** row (for **APT-M-ACTUAL** only) |
+| **dummy_actual_report.xlsx** | **Actual** rows needed for the “has newer” case |
 | **dummy_mailchimp.xlsx** | **3 PNs** → test email |
-| **dummy_cancel_followup.xlsx** | **Run 2 only**: one **DELETE** for **APT-M-CREATE** (after run 1 stored the invite UID) |
-| **dummy_actual_report_cancel_only.xlsx** | Optional **Actual** for run 2 (or reuse **dummy_actual_report.xlsx**) |
+
+We **do not** generate extra “cancel follow-up” files. Those existed only as a shortcut for a second test run; real data is always **Action + Actual + Mailchimp** only.
 
 All confirmation emails go **to** `purudani.2015@gmail.com`.  
 They are sent **from** the mailbox in **`GRAPH_MAILBOX_USER`** (app-only) or the account you sign in with (delegated).
 
 ### Invite audit log (Excel)
 
-Every successful send appends **one row** to **`invite_sent_log.xlsx`** (or **`INVITE_LOG_PATH`**) with: time sent (**Eastern**, from `TIMEZONE` in config, default `America/New_York`), from, to, action, subject, PN, appointment id/key, date/time, location, ICS UID/sequence/method, attachment name.  
+Every successful send appends **one row** to **`invite_sent_log.xlsx`** (or **`INVITE_LOG_PATH`**) with: time sent (**Eastern**, from `TIMEZONE` in config, default `America/New_York`), from, to, action, subject, PN, appointment key, date/time, location, ICS UID/sequence/method, attachment name.  
 Set **`INVITE_LOG_PATH=`** empty in `.env` to disable.
 
 ### Full matrix (`--full`)
 
-Produces the legacy multi-row workbooks (many PNs). See the script output and use **second-run cancel** notes below; dedupe (“keep last”) can reorder what you expect from a quick skim.
+Produces the legacy multi-row workbooks (many PNs). Dedupe (“keep last”) can reorder what you expect from a quick skim.
 
 ## 2. Point the app at dummy files
 
@@ -78,32 +78,40 @@ EVENT_ID_STORE_PATH=/full/path/to/daily-patient-reminder/dummy_event_id_store.js
 3. Check **`invite_sent_log.xlsx`**: **3 rows** — `create`, `reschedule`, `reschedule` (the third line is reschedule fed from **Actual**).
 4. Check **`reminder_YYYYMMDD.log`** and the inbox for **invite.ics** on each message.
 
-## 4. Run 2 — cancel/delete (1 email)
+## 4. Testing cancel/delete (optional second run)
 
-**Cancel/Delete** needs a **stored ICS UID** for that appointment. After run 1, **`APT-M-CREATE`** is in **`event_id_store.json`**.
+**Why not in the same dummy Action file?**  
+If you put **CREATE** and **DELETE** for the **same** visit (same PN + Date + Time) in one Action export, **last row wins** — you’d only process one of them. So cancel is tested with a **separate** Action file (or a new export from the scheduler), same as production.
 
-Point `.env` at the follow-up Action file (and any Actual file you prefer):
+**After run 1** (so `event_id_store.json` has the UID for the create):
 
-```bash
-ACTION_REPORT_PATH=/full/path/to/dummy_cancel_followup.xlsx
-ACTUAL_REPORT_PATH=/full/path/to/dummy_actual_report_cancel_only.xlsx
-```
+1. Make a **copy** of your Action workbook (or export a new Action sheet) that contains **only** a **DELETE** (or **CANCEL w. remove**) row for the **same** PN, **Date**, and **Time** as the minimal **create** row (PN **100000201**, same date/time as the create line in `dummy_action_report.xlsx`).
+2. Point **`ACTION_REPORT_PATH`** at that file. **`ACTUAL_REPORT_PATH`** can stay **`dummy_actual_report.xlsx`** (or any valid Actual file with compatible columns).
+3. Run **`python run_daily.py`** again. Expect **one** email with **cancel.ics** and a new **`invite_sent_log.xlsx`** row with **`action=delete`**.
 
-Run **`python run_daily.py`** again. Expect **one** email with **cancel.ics** and a new **`invite_sent_log.xlsx`** row with **`action=delete`**.
+**Cancel row in the Action report** — use **`CANCEL w. remove`** or **`DELETE`** in the **Action** column (same style as your scheduler export). The job maps both to a cancel email + **`cancel.ics`**.
+
+**Why cancel sometimes didn’t send (key mismatch)**  
+The app looks up the prior invite in **`event_id_store.json`** using **`PN + Date + Time`**. After a **reschedule**, the store stays keyed by the **original** appointment slot (e.g. **12:00**), not the new time (**10:00**). If your cancel row shows the **new** time only, the keys won’t match. **Fix:** either put the **original** Date/Time on the cancel row, or rely on the **single-visit fallback** (if there is only **one** stored visit for that PN, the app now resolves it automatically — see `resolve_store_key_for_cancel` in `event_id_store.py`). If a patient has **two** upcoming visits, you must match the correct **Date/Time** to the line in **`event_id_store.json`**.
+
+**Where to see “cancel” in data**  
+- **Action** sheet: the row whose **Action** column is cancel/delete.  
+- **`event_id_store.json`**: that visit’s key disappears after a successful cancel send.  
+- **`invite_sent_log.xlsx`**: a row with **`action=cancel`** or **`action=delete`**.
 
 ## 5. Minimal scenario reference
 
-| Appointment ID | PN | What to verify |
-|----------------|-----|----------------|
-| **APT-M-CREATE** | 100000201 | CREATE → **invite.ics**, log `action=create` |
-| **APT-M-RESCHED** | 100000202 | RESCHEDULE from **Reschedule Into** → updated **invite.ics** |
-| **APT-M-ACTUAL** | 100000203 | RESCHEDULE + **Has newer** → times from **Actual** sheet |
-| **APT-M-CREATE** (run 2) | 100000201 | DELETE → **cancel.ics**, log `action=delete` |
+| Scenario | PN | What to verify |
+|----------|-----|----------------|
+| Create row | 100000201 | CREATE → **invite.ics**, log `action=create` |
+| Reschedule Into row | 100000202 | RESCHEDULE from **Reschedule Into** → updated **invite.ics** |
+| Has newer + Actual | 100000203 | RESCHEDULE + **Has newer** → times from **Actual** sheet |
+| Cancel (separate Action file, run 2) | 100000201 | DELETE → **cancel.ics**, log `action=delete` |
 
 ## 6. Quick checklist
 
-- [ ] `python scripts/create_dummy_data.py` — dummy files in project folder.
+- [ ] `python scripts/create_dummy_data.py` — **three** dummy files in project folder.
 - [ ] `.env` has `GRAPH_CLIENT_ID` and paths to dummy workbooks.
 - [ ] `ACTION_SHEET_NAME` / `ACTUAL_SHEET_NAME` match your tab names (`Action`/`Actual` for dummies).
 - [ ] Run 1: **3** **invite.ics** emails; **invite_sent_log.xlsx** has **3** rows.
-- [ ] Run 2: **1** **cancel.ics**; log row with **`delete`** for **APT-M-CREATE**.
+- [ ] Run 2 (optional): **1** **cancel.ics** using a **separate** Action-only file for the delete row.
