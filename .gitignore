@@ -1,0 +1,15 @@
+# Local state & secrets
+event_id_store.json
+.graph_token_cache.json
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# Logs & local audit (may contain PII)
+*.log
+invite_sent_log.xlsx
+
+# Local Mailchimp / production exports (use dummy_mailchimp.xlsx for tests)
+processed_mailchimp_export.xlsx
