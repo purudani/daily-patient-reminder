@@ -12,14 +12,14 @@ BASE_FOLDER = os.path.expanduser(
 # Action report: appointments with actions (Create, Reschedule, Cancel, Delete)
 ACTION_REPORT_PATH = os.environ.get(
     "ACTION_REPORT_PATH",
-    os.path.join(BASE_FOLDER, "action report.xlsx")
+    os.path.join(BASE_FOLDER, "action.xlsx")
 )
 ACTION_SHEET_NAME = os.environ.get("ACTION_SHEET_NAME", "Action")  # or index 0
 
 # Actual report: current appointment state used when "has newer action"
 ACTUAL_REPORT_PATH = os.environ.get(
     "ACTUAL_REPORT_PATH",
-    os.path.join(BASE_FOLDER, "actual report.xlsx")
+    os.path.join(BASE_FOLDER, "actual.xlsx")
 )
 ACTUAL_SHEET_NAME = os.environ.get("ACTUAL_SHEET_NAME", "Actual")  # or index 0
 
@@ -48,7 +48,10 @@ INVITE_LOG_PATH = os.environ.get(
 # --- Excel options ---
 SKIP_FIRST_N_ROWS = 2
 SKIP_SAME_DAY = True
-SKIP_NEXT_DAY = False  # set True to also skip tomorrow's appts
+SKIP_NEXT_DAY = True  # skip tomorrow's appts; reschedules moved from future -> next day are still allowed
+# Optional override for "today" in skip logic (YYYY-MM-DD).
+# Empty => derive from Action sheet header ("Activity between: ..."), fallback to system date.
+REFERENCE_DATE = os.environ.get("REFERENCE_DATE", "").strip()
 SKIP_BLANK_PN = True
 # If multiple actions for same appointment, use latest
 MULTIPLE_ACTIONS_USE_LAST = True
@@ -59,6 +62,8 @@ COL_ACTION = "Action"  # CREATE, RESCHEDULE, DELETE, CANCEL w. remove, etc.
 COL_PN = "PN"
 COL_APPT_DATE = "Date"  # appointment date (M/D/YYYY in export)
 COL_APPT_TIME = "Time"  # e.g. 04:30p, 11:30a
+COL_ACTION_DATE = "Action Date"  # lookup key for Has newer mapping
+COL_ACTION_TIME = "Action Time"  # lookup key for Has newer mapping
 COL_LOCATION = "Location"  # LIB | LIBN | LIBJ
 COL_APPT_TYPE = "Type"  # 30DN, MT50, PTDN, etc. (used for duration)
 COL_PATIENT_NAME = "Patient Name"  # "Last, First" — optional display only
@@ -81,6 +86,8 @@ ACTUAL_COL_DATE = os.environ.get("ACTUAL_COL_DATE", "").strip() or None  # e.g. 
 ACTUAL_COL_TIME = os.environ.get("ACTUAL_COL_TIME", "").strip() or None
 ACTUAL_COL_LOCATION = os.environ.get("ACTUAL_COL_LOCATION", "").strip() or None
 ACTUAL_COL_TYPE = os.environ.get("ACTUAL_COL_TYPE", "").strip() or None
+ACTUAL_COL_ACTION_DATE = os.environ.get("ACTUAL_COL_ACTION_DATE", "").strip() or None
+ACTUAL_COL_ACTION_TIME = os.environ.get("ACTUAL_COL_ACTION_TIME", "").strip() or None
 
 # --- Mailchimp / audience export (real export uses separate First/Last) ---
 COL_MAILCHIMP_PN = "PN"

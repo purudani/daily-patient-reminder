@@ -5,7 +5,10 @@ output list of { action, record } for the daily job.
 Data flow:
 - Scheduler-style Action sheet: Date, Time (12h), Type, Location, Action (CREATE/RESCHEDULE/…),
   Reschedule Into (single text), Has newer.
-- Reschedule Into is parsed for new date/time; falls back to legacy Reschedule Date/Time columns.
+- Has newer = Yes: match one row in Actual by PN + Action Date/Time on Actual;
+  if several rows match, narrow by appointment Date then appointment Time.
+  The outgoing slot uses the matched Actual row; action still comes from Action. See BUSINESS_LOGIC.md.
+- Reschedule Into is parsed for new date/time when not using that has_newer path; falls back to legacy columns.
 - Actions like "CANCEL w. remove" normalize to cancel.
 - Location codes → full address via config.LOCATION_MAP.
 - Mailchimp: PN + Email + optional First/Last (or Name).
@@ -13,7 +16,8 @@ Data flow:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+import re
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,19 +25,22 @@ import pandas as pd
 
 from config import (
     ACTION_REPORT_PATH,
-    ACTION_SHEET_NAME,
+    ACTUAL_COL_ACTION_DATE,
+    ACTUAL_COL_ACTION_TIME,
     ACTUAL_COL_DATE,
     ACTUAL_COL_LOCATION,
     ACTUAL_COL_TIME,
     ACTUAL_COL_TYPE,
     ACTUAL_REPORT_PATH,
-    ACTUAL_SHEET_NAME,
     COL_ACTION,
+    COL_ACTION_DATE,
+    COL_ACTION_TIME,
     COL_APPT_DATE,
     COL_APPT_TIME,
     COL_APPT_TYPE,
     COL_HAS_NEWER_ACTION,
     COL_LOCATION,
+    COL_PATIENT_NAME,
     COL_MAILCHIMP_EMAIL,
     COL_MAILCHIMP_FIRST,
     COL_MAILCHIMP_LAST,
@@ -48,6 +55,7 @@ from config import (
     MAILCHIMP_EXPORT_PATH,
     MAILCHIMP_SHEET_NAME,
     MULTIPLE_ACTIONS_USE_LAST,
+    REFERENCE_DATE,
     SKIP_BLANK_PN,
     SKIP_FIRST_N_ROWS,
     SKIP_NEXT_DAY,
@@ -56,6 +64,70 @@ from config import (
 from reschedule_parse import normalize_time_value, parse_reschedule_into
 
 logger = logging.getLogger(__name__)
+
+
+_ACTIVITY_BETWEEN_RE = re.compile(
+    r"Activity\s+between:\s*([0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4})",
+    re.IGNORECASE,
+)
+
+
+def _parse_header_date_token(token: str) -> date | None:
+    raw = (token or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%m-%d-%y", "%m/%d/%y", "%m-%d-%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    try:
+        return pd.to_datetime(raw).date()
+    except Exception:
+        return None
+
+
+def _report_activity_date_from_action_header() -> date | None:
+    """
+    Parse "Activity between: <date> and <date>" from the first rows of Action sheet.
+    Scheduler exports place this text before the table header.
+    """
+    path = Path(ACTION_REPORT_PATH).expanduser()
+    if not path.exists():
+        return None
+    try:
+        preface = pd.read_excel(path, sheet_name=0, header=None, nrows=3)
+    except Exception:
+        return None
+    for _, row in preface.iterrows():
+        for v in row.tolist():
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                continue
+            m = _ACTIVITY_BETWEEN_RE.search(str(v))
+            if not m:
+                continue
+            d = _parse_header_date_token(m.group(1))
+            if d:
+                return d
+    return None
+
+
+def _reference_today() -> date:
+    """
+    Date used by skip logic.
+    - If config.REFERENCE_DATE is set (YYYY-MM-DD), use that.
+    - Else use the machine's current local date.
+    """
+    raw = (REFERENCE_DATE or "").strip()
+    if raw:
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            logger.warning("Invalid REFERENCE_DATE=%s; expected YYYY-MM-DD. Falling back to system date.", raw)
+    inferred = _report_activity_date_from_action_header()
+    if inferred is not None:
+        return inferred
+    return datetime.now().date()
 
 # Only these four actions are processed; any other value in the Action column is skipped.
 ACTIONS_CREATE = ("create",)
@@ -124,6 +196,12 @@ def _reschedule_into_value(row: Any, cols: list) -> Any:
     return None
 
 
+def _is_uncpt(appt_type: Any) -> bool:
+    if appt_type is None or (isinstance(appt_type, float) and pd.isna(appt_type)):
+        return False
+    return str(appt_type).strip().upper() == "UNCPT"
+
+
 def _parse_date(val: Any) -> str | None:
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return None
@@ -144,6 +222,15 @@ def _parse_time(val: Any) -> str:
     return normalize_time_value(val)
 
 
+def _parse_time_optional(val: Any) -> str | None:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    return _parse_time(val)
+
+
 def _normalize_pn(val: Any) -> str:
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return ""
@@ -155,22 +242,23 @@ def _normalize_pn(val: Any) -> str:
 
 
 def load_action_df() -> pd.DataFrame:
-    """Load action report; use row SKIP_FIRST_N_ROWS as header (so first N rows are skipped)."""
+    """Load action report from the first sheet; header starts at SKIP_FIRST_N_ROWS."""
     path = Path(ACTION_REPORT_PATH).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"Action report not found: {path}")
-    df = pd.read_excel(path, sheet_name=ACTION_SHEET_NAME, header=SKIP_FIRST_N_ROWS)
+    # Scheduler export tab names change daily; always consume the first tab.
+    df = pd.read_excel(path, sheet_name=0, header=SKIP_FIRST_N_ROWS)
     df = _normalize_columns(df)
     return df
 
 
 def load_actual_df() -> pd.DataFrame:
-    """Load actual appointment data (same file or separate)."""
+    """Load actual appointment data from the first sheet (tab name may vary daily)."""
     path = Path(ACTUAL_REPORT_PATH).expanduser()
     if not path.exists():
         logger.warning("Actual report not found: %s", path)
         return pd.DataFrame()
-    df = pd.read_excel(path, sheet_name=ACTUAL_SHEET_NAME, header=SKIP_FIRST_N_ROWS)
+    df = pd.read_excel(path, sheet_name=0, header=SKIP_FIRST_N_ROWS)
     df = _normalize_columns(df)
     return df
 
@@ -219,7 +307,7 @@ def _is_same_day(date_val: Any) -> bool:
         return True
     try:
         dt = pd.to_datetime(date_val)
-        return dt.date() == datetime.now().date()
+        return dt.date() == _reference_today()
     except Exception:
         return False
 
@@ -229,9 +317,66 @@ def _is_next_day(date_val: Any) -> bool:
         return False
     try:
         dt = pd.to_datetime(date_val)
-        return dt.date() == (datetime.now() + timedelta(days=1)).date()
+        return dt.date() == (_reference_today() + timedelta(days=1))
     except Exception:
         return False
+
+
+def _is_future_beyond_next_day(date_val: Any) -> bool:
+    if date_val is None:
+        return False
+    try:
+        dt = pd.to_datetime(date_val)
+        return dt.date() > (_reference_today() + timedelta(days=1))
+    except Exception:
+        return False
+
+
+def _appointment_group_key(action: str, record: dict[str, Any]) -> str:
+    """
+    Group rows that refer to the same underlying appointment slot.
+    Reschedules key off the original slot so updates replace the prior invite.
+    """
+    if action == "reschedule" and record.get("original_appt_date") and record.get("original_appt_time"):
+        return f"{record.get('pn')}_{record['original_appt_date']}_{record['original_appt_time']}"
+    return f"{record.get('pn')}_{record.get('appt_date')}_{record.get('appt_time')}"
+
+
+def _action_sort_tuple(item: dict[str, Any]) -> tuple[str, str, str, str, int]:
+    record = item["record"]
+    return (
+        str(record.get("pn") or ""),
+        str(record.get("appt_date") or ""),
+        str(record.get("appt_time") or ""),
+        str(item.get("action_time") or ""),
+        int(item.get("row_index") or 0),
+    )
+
+
+def _resolve_multiple_actions(rows_with_action: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Sort actions by PN, appointment date/time, then action time.
+    If a same-appointment group contains only create/delete in either order, skip it entirely.
+    Otherwise keep the final action after sorting.
+    """
+    if not rows_with_action:
+        return []
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in rows_with_action:
+        grouped.setdefault(item["appointment_group_key"], []).append(item)
+
+    resolved: list[dict[str, Any]] = []
+    for key, group in grouped.items():
+        group.sort(key=_action_sort_tuple)
+        unique_actions = {g["action"] for g in group}
+        if len(group) == 2 and unique_actions == {"create", "delete"}:
+            logger.info("Skipping appointment %s: same-day actions collapse to create/delete pair.", key)
+            continue
+        resolved.append(group[-1])
+
+    resolved.sort(key=_action_sort_tuple)
+    return resolved
 
 
 def _action_row_to_record(
@@ -243,7 +388,7 @@ def _action_row_to_record(
     actual_cols: tuple[str, str, str, str],
     actual_df_columns: list | None,
 ) -> dict[str, Any] | None:
-    """Build one record dict for calendar_actions from action row (and optional actual row)."""
+    """Build one record dict for calendar_actions from action row and optional Actual row."""
     pn_val = _cell_value(row, COL_PN, cols)
     pn = _normalize_pn(pn_val)
     if not pn and SKIP_BLANK_PN:
@@ -266,6 +411,7 @@ def _action_row_to_record(
         time_str = _parse_time(_cell_value(actual_row, at_col, acols))
         loc = _cell_value(actual_row, al_col, acols)
         appt_type = _cell_value(actual_row, aty_col, acols)
+        row_name = _cell_value(actual_row, COL_PATIENT_NAME, acols)
     else:
         base_date = _parse_date(_cell_value(row, COL_APPT_DATE, cols))
         base_time = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
@@ -279,12 +425,16 @@ def _action_row_to_record(
             time_str = base_time
         loc = _cell_value(row, COL_LOCATION, cols)
         appt_type = _cell_value(row, COL_APPT_TYPE, cols)
+        row_name = _cell_value(row, COL_PATIENT_NAME, cols)
 
     if not date_str:
         return None
 
     loc_code = (str(loc).strip().upper() if loc is not None and not (isinstance(loc, float) and pd.isna(loc)) else "LIB")
     location_address = LOCATION_MAP.get(loc_code) or loc_code
+    if not name:
+        if row_name is not None and not (isinstance(row_name, float) and pd.isna(row_name)):
+            name = str(row_name).strip()
 
     return {
         "pn": pn,
@@ -298,24 +448,35 @@ def _action_row_to_record(
     }
 
 
-def _find_actual_row_for_pn(
+def _find_actual_row_for_has_newer(
     actual_df: pd.DataFrame,
     pn: str,
-    *,
-    date_hint: str | None = None,
-    time_hint: str | None = None,
+    action_row: Any,
+    action_cols: list,
 ) -> Any | None:
     """
-    Find one row in the Actual sheet for this PN.
+    Find one Actual row for has_newer processing.
 
-    With multiple rows for the same PN, match **Date + Time** on Actual to the Action row’s
-    scheduled **Date** / **Time**. If no match, use the first PN row and log a warning.
+    1. Candidates: same PN, and Actual's Action Date/Time match the Action row's
+       Action Date/Time (scheduler columns on the Actual export).
+    2. Exactly one match → return it.
+    3. Several matches → keep rows whose Actual *appointment* Date equals the Action
+       row's appointment Date; if still several, narrow by Actual appointment Time vs
+       Action appointment Time.
+    4. Zero or ambiguous after narrowing → None (caller skips).
     """
     if actual_df is None or actual_df.empty:
         return None
     cols = list(actual_df.columns)
     ad_col = _actual_column(ACTUAL_COL_DATE, COL_APPT_DATE)
     at_col = _actual_column(ACTUAL_COL_TIME, COL_APPT_TIME)
+    aad_col = _actual_column(ACTUAL_COL_ACTION_DATE, COL_ACTION_DATE)
+    aat_col = _actual_column(ACTUAL_COL_ACTION_TIME, COL_ACTION_TIME)
+
+    action_date_hint = _parse_date(_cell_value(action_row, COL_ACTION_DATE, action_cols))
+    action_time_hint = _parse_time_optional(_cell_value(action_row, COL_ACTION_TIME, action_cols))
+    orig_date = _parse_date(_cell_value(action_row, COL_APPT_DATE, action_cols))
+    orig_time = _parse_time_optional(_cell_value(action_row, COL_APPT_TIME, action_cols))
 
     matching: list[Any] = []
     for _, row in actual_df.iterrows():
@@ -328,24 +489,66 @@ def _find_actual_row_for_pn(
 
     if not matching:
         return None
+
+    if action_date_hint and action_time_hint:
+        matching = [
+            r for r in matching
+            if _parse_date(_cell_value(r, aad_col, cols)) == action_date_hint
+            and _parse_time_optional(_cell_value(r, aat_col, cols)) == action_time_hint
+        ]
+    else:
+        matching = []
+
+    if not matching:
+        return None
     if len(matching) == 1:
         return matching[0]
 
-    # Multiple rows for this PN — match on scheduled date/time
-    if date_hint and time_hint:
-        for actual_row in matching:
-            d = _parse_date(_cell_value(actual_row, ad_col, cols))
-            t = _parse_time(_cell_value(actual_row, at_col, cols))
-            if d == date_hint and t == time_hint:
-                return actual_row
+    if orig_date:
+        by_date = [
+            r for r in matching
+            if _parse_date(_cell_value(r, ad_col, cols)) == orig_date
+        ]
+        if len(by_date) == 1:
+            return by_date[0]
+        if len(by_date) == 0:
+            logger.warning(
+                "Actual sheet: %d rows for PN=%s match Action Date/Time but none match Action appt date %s; skip.",
+                len(matching),
+                pn,
+                orig_date,
+            )
+            return None
+        matching = by_date
+
+    if len(matching) == 1:
+        return matching[0]
+
+    if orig_time:
+        by_time = [
+            r for r in matching
+            if _parse_time_optional(_cell_value(r, at_col, cols)) == orig_time
+        ]
+        if len(by_time) == 1:
+            return by_time[0]
+        if len(by_time) == 0:
+            logger.warning(
+                "Actual sheet: %d rows for PN=%s after appt-date narrow but none match Action appt time; skip.",
+                len(matching),
+                pn,
+            )
+            return None
+        matching = by_time
+
+    if len(matching) == 1:
+        return matching[0]
 
     logger.warning(
-        "Actual sheet: %d rows for PN=%s; could not match Date+Time to Action row. "
-        "Using the first row. Prefer one current-appointment row per patient on Actual, or unique Date+Time per visit.",
+        "Actual sheet: %d rows for PN=%s remain ambiguous after appt date/time narrow; skip.",
         len(matching),
         pn,
     )
-    return matching[0]
+    return None
 
 
 def get_actions_to_process() -> list[dict[str, Any]]:
@@ -356,14 +559,17 @@ def get_actions_to_process() -> list[dict[str, Any]]:
     Rules:
     - Skip first N rows of action sheet.
     - Skip blank PN (if SKIP_BLANK_PN).
-    - Skip same-day (and optionally next-day) appointments from action row when not using Actual.
     - If multiple actions for same appointment, keep last.
-    - Has Newer Action = Yes:
-      - Create or Delete -> skip (won't show in Actual sheet).
-      - Reschedule -> get new appt data from Actual; if not found in Actual -> skip (deleted);
-        if new appt date is today -> skip; else use Actual data.
-      - Cancel -> must find appt in Actual; if not found -> skip; else process cancel.
-    - Reschedule without Actual -> parse Reschedule Into text; else legacy Reschedule Date/Time columns.
+    - Without Has Newer:
+      - Skip same-day/next-day using Action appointment Date.
+      - Skip UNCPT using Action/record type.
+      - Reschedule parses Reschedule Into first, then legacy Reschedule Date/Time.
+    - With Has Newer:
+      - Match Actual by PN + Action Date + Action Time on Actual.
+      - If several rows match, narrow by appointment Date, then appointment Time.
+      - Skip only if no usable Actual row remains, resolved type is UNCPT, or resolved
+        appointment date is same-day/next-day per flags.
+      - Outgoing appointment date/time/location/type come from Actual; action stays from Action.
     - Location column codes are expanded to full address in record.location_address.
     """
     action_df = load_action_df()
@@ -399,54 +605,55 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         hn = _has_newer_value(row, cols)
         has_newer = hn is not None and str(hn).strip().lower() in ("true", "1", "yes", "y")
 
-        if has_newer and action in (*ACTIONS_CREATE, *ACTIONS_DELETE):
-            continue  # create & delete won't show in actual appt data sheet, hence skip
+        original_appt_date = _parse_date(_cell_value(row, COL_APPT_DATE, cols))
 
-        # When Has newer action = Yes, we must resolve from Actual (except Create/Delete already skipped)
-        need_actual_lookup = has_newer and action in (*ACTIONS_RESCHEDULE, *ACTIONS_CANCEL)
+        if not has_newer:
+            action_appt_type = _cell_value(row, COL_APPT_TYPE, cols)
+            if _is_uncpt(action_appt_type):
+                continue
+            if SKIP_SAME_DAY and _is_same_day(original_appt_date):
+                continue
+
+        need_actual_lookup = has_newer
         actual_row = None
         if need_actual_lookup:
-            date_hint = _parse_date(_cell_value(row, COL_APPT_DATE, cols))
-            time_hint = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
-            actual_row = _find_actual_row_for_pn(
-                actual_df,
-                pn,
-                date_hint=date_hint,
-                time_hint=time_hint,
-            )
+            actual_row = _find_actual_row_for_has_newer(actual_df, pn, row, cols)
             if actual_row is None:
-                continue  # cannot find appt in actual sheet -> skip (e.g. deleted)
-
-        use_actual_for_record = has_newer and action in ACTIONS_RESCHEDULE
-        use_reschedule_cols = action in ACTIONS_RESCHEDULE and not use_actual_for_record
-
-        # Same-day skip: for rows not using Actual, use action row date; for Actual we check after building record
-        if not use_actual_for_record:
-            date_val = _cell_value(row, COL_APPT_DATE, cols)
-            if SKIP_SAME_DAY and _is_same_day(date_val):
                 continue
-            if SKIP_NEXT_DAY and _is_next_day(date_val):
-                continue
+
+        use_reschedule_cols = action in ACTIONS_RESCHEDULE and not need_actual_lookup
 
         record = _action_row_to_record(
             row,
             cols,
             mailchimp,
-            actual_row if use_actual_for_record else None,
+            actual_row if need_actual_lookup else None,
             use_reschedule_cols,
             actual_field_tuple,
-            actual_cols_list if use_actual_for_record else None,
+            actual_cols_list if need_actual_lookup else None,
         )
         if record is None:
             continue
 
-        # When we used Actual data for Reschedule: skip if new appt date is today
-        if use_actual_for_record and SKIP_SAME_DAY and _is_same_day(record.get("appt_date")):
+        moved_future_to_next_day = (
+            action in ACTIONS_RESCHEDULE
+            and _is_future_beyond_next_day(original_appt_date)
+            and _is_next_day(record.get("appt_date"))
+        )
+
+        if _is_uncpt(record.get("appt_type")):
+            continue
+        if SKIP_SAME_DAY and _is_same_day(record.get("appt_date")):
+            continue
+        if SKIP_NEXT_DAY and _is_next_day(record.get("appt_date")) and not moved_future_to_next_day:
             continue
 
         # For reschedule, keep original date/time so we can look up the existing event by key
         if action in ACTIONS_RESCHEDULE:
-            record["original_appt_date"] = _parse_date(_cell_value(row, COL_APPT_DATE, cols))
+            record["original_appt_date"] = original_appt_date
+            record["original_appt_time"] = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
+        elif need_actual_lookup and action in (*ACTIONS_CANCEL, *ACTIONS_DELETE):
+            record["original_appt_date"] = original_appt_date
             record["original_appt_time"] = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
         if SKIP_BLANK_PN and not record.get("email"):
             logger.debug("Skipping PN %s: no email in Mailchimp", pn)
@@ -455,23 +662,16 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         rows_with_action.append({
             "action": action,
             "record": record,
-            "sort_key": (pn, _cell_value(row, COL_APPT_DATE, cols), idx),
+            "row_index": idx,
+            "action_time": _parse_time_optional(_cell_value(row, COL_ACTION_TIME, cols)) or "",
+            "appointment_group_key": _appointment_group_key(action, record),
         })
 
     # If multiple actions for same appointment, keep last
     if MULTIPLE_ACTIONS_USE_LAST and rows_with_action:
-        by_key = {}
-        for item in rows_with_action:
-            r = item["record"]
-            a = item["action"]
-            if a == "reschedule" and r.get("original_appt_date") and r.get("original_appt_time"):
-                key = f"{r.get('pn')}_{r['original_appt_date']}_{r['original_appt_time']}"
-            else:
-                key = f"{r.get('pn')}_{r.get('appt_date')}_{r.get('appt_time')}"
-            by_key[key] = item
-        rows_with_action = list(by_key.values())
+        rows_with_action = _resolve_multiple_actions(rows_with_action)
 
     # Sort for stable order
-    rows_with_action.sort(key=lambda x: (str(x["sort_key"][0]), str(x["sort_key"][1]), x["sort_key"][2]))
+    rows_with_action.sort(key=_action_sort_tuple)
 
     return [{"action": item["action"], "record": item["record"]} for item in rows_with_action]

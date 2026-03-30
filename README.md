@@ -4,6 +4,56 @@ Automation that runs **daily at 8 PM** on your computer: reads appointment data 
 
 ---
 
+## Main Scripts
+
+- **`simulate_daily.py`**: dry-run the daily logic and review what would happen.
+- **`one_time_send.py`**: send the one-time launch file in the simple `Date / Time / Patient # / Patient Fir / Patient La / Location / App Type / Email` format.
+- **`run_daily.py`**: run the ongoing daily production flow from Action + Actual + Mailchimp.
+
+Those are the only three scripts you need for the planned workflow.
+
+---
+
+## Dry Run Vs Actual Send
+
+### Daily validation
+
+Dry run:
+
+```bash
+python3 simulate_daily.py
+```
+
+This does **not** send emails. It writes a simulation workbook so you can review what would happen.
+
+Actual send:
+
+```bash
+python3 run_daily.py
+```
+
+This uses the Action + Actual + Mailchimp inputs and sends real patient emails.
+
+### One-time launch file
+
+Dry run:
+
+```bash
+python3 one_time_send.py --report-path "/path/to/launch_file.xlsx"
+```
+
+This does **not** send emails. It writes a one-time log workbook for review.
+
+Actual send:
+
+```bash
+python3 one_time_send.py --report-path "/path/to/launch_file.xlsx" --send
+```
+
+This sends real patient emails and stores invite IDs in `event_id_store.json` for future reschedules/cancels.
+
+---
+
 ## What the tool does (end-to-end)
 
 1. **Reads three data sources** (from your configured folder):
@@ -15,9 +65,10 @@ Automation that runs **daily at 8 PM** on your computer: reads appointment data 
    - Skips first 2 rows of the action sheet.
    - Skips same-day (and optionally next-day) appointments.
    - Skips rows with blank PN.
-   - If multiple actions for the same appointment, keeps the **last** one.
-   - **Has Newer Action** + Create or Delete → skip (those won’t show in actual data).
-   - **Has Newer Action** + Reschedule → take new date/time/location from the **Actual** sheet.
+   - If multiple actions exist for the same appointment, groups them by appointment slot, sorts by **PN + appointment date + appointment time + Action Time**, and keeps the final action.
+   - If the same appointment has exactly one **Create** and one **Delete** in the same run, skips both.
+   - **Has newer** rows are resolved against the **Actual** sheet using **PN + Action Date + Action Time**, then narrowed by appointment date/time when needed.
+   - Reschedules moved from a future date into **next day** still send an updated invite even when `SKIP_NEXT_DAY=True`.
 
 3. **Location codes** → full address in the email:
    - **Location** column holds codes (LIB, LIBN, LIBJ). The tool maps them to full addresses in the confirmation and calendar invite (see `config.LOCATION_MAP`).
@@ -75,7 +126,7 @@ flowchart LR
     Run[run_daily.py]
     LoadEnv[Load .env if present]
     ReadExcel[Read Action plus Actual plus Mailchimp]
-    Rules[Apply rules: skip 2 rows, same day, blank PN, has newer action]
+    Rules[Apply rules: skip 2 rows, same or next day, grouped action resolution, has newer lookup]
     Token[Get Graph token cached or device code]
     Loop[For each action: Create or Reschedule or Cancel or Delete]
     Graph[Microsoft Graph: sendMail + invite.ics]
@@ -137,9 +188,9 @@ Defaults match the **Scheduler Activity Report** style (Date/Time as `M/D/YYYY` 
 
 If the **Actual** tab uses different headers (e.g. `Last Schedul` for date), set env vars `ACTUAL_COL_DATE`, `ACTUAL_COL_TIME`, etc. (see `config.py`).
 
-#### How visits are keyed (ICS + dedupe)
+#### How visits are keyed (ICS + grouped resolution)
 
-The app does **not** require an **Appointment ID** column. Each visit is identified by **PN + scheduled Date + Time** from the exports (for **reschedule**, the **original** date/time on the Action row is used so the same calendar invite is updated). That key is stored in `event_id_store.json` and used for “last wins” dedupe when the same visit appears on multiple rows.
+The app does **not** require an **Appointment ID** column. Each visit is identified by **PN + scheduled Date + Time** from the exports (for **reschedule**, the **original** date/time on the Action row is used so the same calendar invite is updated). That key is stored in `event_id_store.json` and is also used to group repeated actions for the same visit so the tool can resolve same-appointment conflicts before sending.
 
 #### Why Actual doesn’t need “all” Action columns
 
@@ -259,6 +310,8 @@ To test without affecting real patients, use the dummy data generator and send a
 | **`graph_auth.py`** | Gets Graph access token (MSAL). |
 | **`calendar_actions.py`** | Create/Reschedule → mail + **invite.ics**; Cancel/Delete → mail + **cancel.ics** + remove from store. |
 | **`invite_log.py`** | Appends one row per successful send to **`invite_sent_log.xlsx`** (`INVITE_LOG_PATH`). |
+| **`simulate_daily.py`** | Dry-run workbook for reviewing daily behavior without sending mail. |
+| **`one_time_send.py`** | One-time launch sender for the simple separate launch workbook. |
 | **`run_daily.py`** | Entry point: read Excel → get token → process each action → log. |
 
 ---
