@@ -1,49 +1,40 @@
 """
 Configuration for the daily patient reminder automation.
-Edit paths and options to match your setup.
+
+All paths are derived from a single project root so the repo can be moved to a
+new device without reconfiguring every file location.
 """
 import os
 
-# --- Paths (local folder where files are placed) ---
-BASE_FOLDER = os.path.expanduser(
-    os.environ.get("REMINDER_BASE_FOLDER", "~/Desktop/Git_projects/daily-patient-reminder")
+# --- Rooted folders ---
+ROOT_FOLDER = os.path.abspath(
+    os.path.expanduser(
+        os.environ.get("REMINDER_ROOT_FOLDER", os.path.dirname(__file__))
+    )
 )
+EXCEL_FOLDER = os.path.join(ROOT_FOLDER, "Excel")
+LOG_FOLDER = os.path.join(ROOT_FOLDER, "logs")
+SIMULATION_FOLDER = os.path.join(ROOT_FOLDER, "simulations")
 
-# Action report: appointments with actions (Create, Reschedule, Cancel, Delete)
-ACTION_REPORT_PATH = os.environ.get(
-    "ACTION_REPORT_PATH",
-    os.path.join(BASE_FOLDER, "action.xlsx")
-)
-ACTION_SHEET_NAME = os.environ.get("ACTION_SHEET_NAME", "Action")  # or index 0
+# Action/Actual/Mailchimp workbooks live under Excel/.
+ACTION_REPORT_PATH = os.path.join(EXCEL_FOLDER, "action.xlsx")
+ACTUAL_REPORT_PATH = os.path.join(EXCEL_FOLDER, "actual.xlsx")
+MAILCHIMP_EXPORT_PATH = os.path.join(EXCEL_FOLDER, "processed_mailchimp_export.xlsx")
 
-# Actual report: current appointment state used when "has newer action"
-ACTUAL_REPORT_PATH = os.environ.get(
-    "ACTUAL_REPORT_PATH",
-    os.path.join(BASE_FOLDER, "actual.xlsx")
-)
-ACTUAL_SHEET_NAME = os.environ.get("ACTUAL_SHEET_NAME", "Actual")  # or index 0
+# Scheduler export tab names vary, so the readers always consume the first sheet.
+ACTION_SHEET_NAME = "Action"
+ACTUAL_SHEET_NAME = "Actual"
 
 # Note: Action and Actual are treated as separate files by default.
-# If your office exports both tabs into one workbook, set both *_REPORT_PATH to that file.
+# If your office exports both tabs into one workbook, point both constants to that file.
 
-# Mailchimp export: PN -> email lookup
-MAILCHIMP_EXPORT_PATH = os.environ.get(
-    "MAILCHIMP_EXPORT_PATH",
-    os.path.join(BASE_FOLDER, "processed_mailchimp_export.xlsx")
-)
-MAILCHIMP_SHEET_NAME = os.environ.get("MAILCHIMP_SHEET_NAME", 0)  # first sheet
+MAILCHIMP_SHEET_NAME = 0  # first sheet
 
 # Persistent store for ICS UID + SEQUENCE (so reschedules/cancels match the same calendar entry)
-EVENT_ID_STORE_PATH = os.environ.get(
-    "EVENT_ID_STORE_PATH",
-    os.path.join(BASE_FOLDER, "event_id_store.json")
-)
+EVENT_ID_STORE_PATH = os.path.join(ROOT_FOLDER, "event_id_store.json")
 
 # One row per outbound patient email (audit trail). Set INVITE_LOG_PATH= to disable.
-INVITE_LOG_PATH = os.environ.get(
-    "INVITE_LOG_PATH",
-    os.path.join(BASE_FOLDER, "invite_sent_log.xlsx"),
-)
+INVITE_LOG_PATH = os.path.join(LOG_FOLDER, "invite_sent_log.xlsx")
 
 # --- Excel options ---
 SKIP_FIRST_N_ROWS = 2
@@ -158,5 +149,4 @@ GRAPH_SCOPES = [
 GRAPH_APP_ONLY_SCOPE = ["https://graph.microsoft.com/.default"]
 
 # --- Logging ---
-LOG_FOLDER = os.environ.get("REMINDER_LOG_FOLDER", BASE_FOLDER)
 LOG_INVITES_AND_CHANGES = True  # log every invite/change sent

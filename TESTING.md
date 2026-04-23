@@ -46,10 +46,13 @@ Either use environment variables or a `.env` file in the project folder:
 ```bash
 # .env (create from .env.example)
 GRAPH_CLIENT_ID=your-azure-app-client-id
-ACTION_REPORT_PATH=/full/path/to/daily-patient-reminder/dummy_action_report.xlsx
-ACTUAL_REPORT_PATH=/full/path/to/daily-patient-reminder/dummy_actual_report.xlsx
-MAILCHIMP_EXPORT_PATH=/full/path/to/daily-patient-reminder/dummy_mailchimp.xlsx
 ```
+
+Place the test files in:
+
+- `Excel/action.xlsx`
+- `Excel/actual.xlsx`
+- `Excel/processed_mailchimp_export.xlsx`
 
 If your **production** workbook uses tab names like `3-16 action appt`, set:
 
@@ -86,7 +89,7 @@ If you put **CREATE** and **DELETE** for the **same** visit (same PN + Date + Ti
 **After run 1** (so `event_id_store.json` has the UID for the create):
 
 1. Make a **copy** of your Action workbook (or export a new Action sheet) that contains **only** a **DELETE** (or **CANCEL w. remove**) row for the **same** PN, **Date**, and **Time** as the minimal **create** row (PN **100000201**, same date/time as the create line in `dummy_action_report.xlsx`).
-2. Point **`ACTION_REPORT_PATH`** at that file. **`ACTUAL_REPORT_PATH`** can stay **`dummy_actual_report.xlsx`** (or any valid Actual file with compatible columns).
+2. Replace **`Excel/action.xlsx`** with that file. **`Excel/actual.xlsx`** can stay the same (or any valid Actual file with compatible columns).
 3. Run **`python run_daily.py`** again. Expect **one** email with **cancel.ics** and a new **`invite_sent_log.xlsx`** row with **`action=delete`**.
 
 **Cancel row in the Action report** — use **`CANCEL w. remove`** or **`DELETE`** in the **Action** column (same style as your scheduler export). The job maps both to a cancel email + **`cancel.ics`**.

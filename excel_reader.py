@@ -379,6 +379,43 @@ def _resolve_multiple_actions(rows_with_action: list[dict[str, Any]]) -> list[di
     return resolved
 
 
+def _decision_row(
+    idx: int,
+    raw_action: Any,
+    normalized_action: str | None,
+    pn: str,
+    decision: str,
+    reason: str,
+    *,
+    has_newer: bool = False,
+    used_actual: bool = False,
+    would_send: bool = False,
+    send_kind: str = "",
+    appt_date: str = "",
+    appt_time: str = "",
+    appt_type: str = "",
+    email: str = "",
+    patient_name: str = "",
+) -> dict[str, Any]:
+    return {
+        "row_index": idx,
+        "pn": pn,
+        "patient_name": patient_name,
+        "raw_action": str(raw_action or ""),
+        "normalized_action": normalized_action or "",
+        "has_newer": has_newer,
+        "decision": decision,
+        "reason": reason,
+        "used_actual": used_actual,
+        "would_send": would_send,
+        "send_kind": send_kind,
+        "appt_date": appt_date,
+        "appt_time": appt_time,
+        "appt_type": appt_type,
+        "email": email,
+    }
+
+
 def _action_row_to_record(
     row: Any,
     cols: list,
@@ -551,31 +588,12 @@ def _find_actual_row_for_has_newer(
     return None
 
 
-def get_actions_to_process() -> list[dict[str, Any]]:
-    """
-    Load all data, apply rules, return list of:
-    { "action": "Create"|"Reschedule"|"Cancel"|"Delete", "record": { ... } }
-
-    Rules:
-    - Skip first N rows of action sheet.
-    - Skip blank PN (if SKIP_BLANK_PN).
-    - If multiple actions for same appointment, keep last.
-    - Without Has Newer:
-      - Skip same-day/next-day using Action appointment Date.
-      - Skip UNCPT using Action/record type.
-      - Reschedule parses Reschedule Into first, then legacy Reschedule Date/Time.
-    - With Has Newer:
-      - Match Actual by PN + Action Date + Action Time on Actual.
-      - If several rows match, narrow by appointment Date, then appointment Time.
-      - Skip only if no usable Actual row remains, resolved type is UNCPT, or resolved
-        appointment date is same-day/next-day per flags.
-      - Outgoing appointment date/time/location/type come from Actual; action stays from Action.
-    - Location column codes are expanded to full address in record.location_address.
-    """
+def evaluate_daily_actions() -> dict[str, list[dict[str, Any]]]:
+    """Return both row-level decisions and the final actions that would be sent."""
     action_df = load_action_df()
     if action_df.empty:
         logger.info("Action sheet is empty")
-        return []
+        return {"decisions": [], "actions": []}
 
     actual_df = load_actual_df()
     mailchimp = load_mailchimp_lookup()
@@ -588,18 +606,53 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         _actual_column(ACTUAL_COL_TYPE, COL_APPT_TYPE),
     )
 
+    decisions: list[dict[str, Any]] = []
     rows_with_action = []
     for idx, row in action_df.iterrows():
+        row_patient_name = str(_cell_value(row, COL_PATIENT_NAME, cols) or "").strip()
         action_val = _cell_value(row, COL_ACTION, cols)
+        pn_val = _cell_value(row, COL_PN, cols)
+        pn = _normalize_pn(pn_val)
         if action_val is None or (isinstance(action_val, float) and pd.isna(action_val)):
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    None,
+                    pn,
+                    "skip",
+                    "unsupported/blank action",
+                    patient_name=row_patient_name,
+                )
+            )
             continue
         action = _normalize_action(str(action_val).strip())
         if action is None or action not in VALID_ACTIONS:
+            raw = str(action_val or "").strip()
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    f"unsupported action: {raw}" if raw else "unsupported/blank action",
+                    patient_name=row_patient_name,
+                )
+            )
             continue
-
-        pn_val = _cell_value(row, COL_PN, cols)
-        pn = _normalize_pn(pn_val)
         if not pn and SKIP_BLANK_PN:
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    "blank PN",
+                    patient_name=row_patient_name,
+                )
+            )
             continue
 
         hn = _has_newer_value(row, cols)
@@ -610,8 +663,31 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         if not has_newer:
             action_appt_type = _cell_value(row, COL_APPT_TYPE, cols)
             if _is_uncpt(action_appt_type):
+                decisions.append(
+                    _decision_row(
+                        idx,
+                        action_val,
+                        action,
+                        pn,
+                        "skip",
+                        "UNCPT on action row",
+                        patient_name=row_patient_name,
+                    )
+                )
                 continue
             if SKIP_SAME_DAY and _is_same_day(original_appt_date):
+                decisions.append(
+                    _decision_row(
+                        idx,
+                        action_val,
+                        action,
+                        pn,
+                        "skip",
+                        "same-day (Action appt date)",
+                        has_newer=has_newer,
+                        patient_name=row_patient_name,
+                    )
+                )
                 continue
 
         need_actual_lookup = has_newer
@@ -619,6 +695,18 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         if need_actual_lookup:
             actual_row = _find_actual_row_for_has_newer(actual_df, pn, row, cols)
             if actual_row is None:
+                decisions.append(
+                    _decision_row(
+                        idx,
+                        action_val,
+                        action,
+                        pn,
+                        "skip",
+                        "has_newer: no usable Actual row after PN + Action Date/Time match and appointment date/time narrowing",
+                        has_newer=has_newer,
+                        patient_name=row_patient_name,
+                    )
+                )
                 continue
 
         use_reschedule_cols = action in ACTIONS_RESCHEDULE and not need_actual_lookup
@@ -633,6 +721,19 @@ def get_actions_to_process() -> list[dict[str, Any]]:
             actual_cols_list if need_actual_lookup else None,
         )
         if record is None:
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    "record build failed",
+                    has_newer=has_newer,
+                    used_actual=need_actual_lookup,
+                    patient_name=row_patient_name,
+                )
+            )
             continue
 
         moved_future_to_next_day = (
@@ -642,10 +743,49 @@ def get_actions_to_process() -> list[dict[str, Any]]:
         )
 
         if _is_uncpt(record.get("appt_type")):
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    "UNCPT on actual/resolved record",
+                    has_newer=has_newer,
+                    used_actual=need_actual_lookup,
+                    patient_name=str(record.get("patient_name") or row_patient_name or ""),
+                )
+            )
             continue
         if SKIP_SAME_DAY and _is_same_day(record.get("appt_date")):
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    "same-day (Actual appt date)" if need_actual_lookup else "same-day (resolved appt date)",
+                    has_newer=has_newer,
+                    used_actual=need_actual_lookup,
+                    patient_name=str(record.get("patient_name") or row_patient_name or ""),
+                )
+            )
             continue
         if SKIP_NEXT_DAY and _is_next_day(record.get("appt_date")) and not moved_future_to_next_day:
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    "next-day (Actual appt date)" if need_actual_lookup else "next-day (resolved appt date)",
+                    has_newer=has_newer,
+                    used_actual=need_actual_lookup,
+                    patient_name=str(record.get("patient_name") or row_patient_name or ""),
+                )
+            )
             continue
 
         # For reschedule, keep original date/time so we can look up the existing event by key
@@ -656,22 +796,100 @@ def get_actions_to_process() -> list[dict[str, Any]]:
             record["original_appt_date"] = original_appt_date
             record["original_appt_time"] = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
         if SKIP_BLANK_PN and not record.get("email"):
-            logger.debug("Skipping PN %s: no email in Mailchimp", pn)
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    "missing email in Mailchimp",
+                    has_newer=has_newer,
+                    used_actual=need_actual_lookup,
+                    appt_date=str(record.get("appt_date") or ""),
+                    appt_time=str(record.get("appt_time") or ""),
+                    appt_type=str(record.get("appt_type") or ""),
+                    patient_name=str(record.get("patient_name") or row_patient_name or ""),
+                )
+            )
             continue
 
-        rows_with_action.append({
-            "action": action,
-            "record": record,
-            "row_index": idx,
-            "action_time": _parse_time_optional(_cell_value(row, COL_ACTION_TIME, cols)) or "",
-            "appointment_group_key": _appointment_group_key(action, record),
-        })
+        send_kind = "invite.ics" if action in (*ACTIONS_CREATE, *ACTIONS_RESCHEDULE) else "cancel.ics"
+        decisions.append(
+            _decision_row(
+                idx,
+                action_val,
+                action,
+                pn,
+                "process",
+                "candidate before grouped-action resolution",
+                has_newer=has_newer,
+                used_actual=need_actual_lookup,
+                would_send=True,
+                send_kind=send_kind,
+                appt_date=str(record.get("appt_date") or ""),
+                appt_time=str(record.get("appt_time") or ""),
+                appt_type=str(record.get("appt_type") or ""),
+                email=str(record.get("email") or ""),
+                patient_name=str(record.get("patient_name") or row_patient_name or ""),
+            )
+        )
+        rows_with_action.append(
+            {
+                "action": action,
+                "record": record,
+                "row_index": idx,
+                "action_time": _parse_time_optional(_cell_value(row, COL_ACTION_TIME, cols)) or "",
+                "appointment_group_key": _appointment_group_key(action, record),
+            }
+        )
 
     # If multiple actions for same appointment, keep last
     if MULTIPLE_ACTIONS_USE_LAST and rows_with_action:
+        kept_before = {item["row_index"]: item for item in rows_with_action}
         rows_with_action = _resolve_multiple_actions(rows_with_action)
+        kept_after = {item["row_index"] for item in rows_with_action}
+        for decision in decisions:
+            if decision["decision"] != "process":
+                continue
+            row_index = int(decision["row_index"])
+            item = kept_before.get(row_index)
+            if item is None:
+                continue
+            if row_index in kept_after:
+                decision["reason"] = "would send after grouped-action resolution"
+                continue
+            group = [
+                candidate
+                for candidate in kept_before.values()
+                if candidate["appointment_group_key"] == item["appointment_group_key"]
+            ]
+            unique_actions = {candidate["action"] for candidate in group}
+            decision["decision"] = "skip"
+            decision["would_send"] = False
+            decision["send_kind"] = ""
+            if len(group) == 2 and unique_actions == {"create", "delete"}:
+                decision["reason"] = "same appointment has create/delete pair in one run"
+            else:
+                decision["reason"] = "superseded by later action for same appointment"
+    else:
+        for decision in decisions:
+            if decision["decision"] == "process":
+                decision["reason"] = "would send after grouped-action resolution"
 
     # Sort for stable order
     rows_with_action.sort(key=_action_sort_tuple)
 
-    return [{"action": item["action"], "record": item["record"]} for item in rows_with_action]
+    return {
+        "decisions": decisions,
+        "actions": [{"action": item["action"], "record": item["record"]} for item in rows_with_action],
+    }
+
+
+def get_actions_to_process() -> list[dict[str, Any]]:
+    """
+    Load all data, apply the daily rules, and return the final send list.
+
+    Use evaluate_daily_actions() when you also need row-level reasoning for simulation/debugging.
+    """
+    return evaluate_daily_actions()["actions"]

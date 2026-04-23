@@ -37,9 +37,10 @@ from config import (
     LOG_INVITES_AND_CHANGES,
     LOCATION_MAP,
 )
-from excel_reader import get_actions_to_process
+from excel_reader import evaluate_daily_actions
 from calendar_actions import do_cancel, do_create, do_delete, do_reschedule
 from graph_auth import get_access_token
+from simulate_daily import generate_simulation_workbook
 
 
 def setup_logging() -> logging.Logger:
@@ -100,7 +101,11 @@ def main() -> int:
             "Set GRAPH_MAILBOX_USER to use /users/{email}/... instead of /me."
         )
     try:
-        actions = get_actions_to_process()
+        evaluation = evaluate_daily_actions()
+        simulation_path = generate_simulation_workbook(evaluation)
+        logger.info("Simulation workbook: %s", simulation_path)
+
+        actions = evaluation["actions"]
         logger.info("Actions to process: %d", len(actions))
         if not actions:
             return 0

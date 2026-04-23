@@ -8,7 +8,7 @@ Automation that runs **daily at 8 PM** on your computer: reads appointment data 
 
 - **`simulate_daily.py`**: dry-run the daily logic and review what would happen.
 - **`one_time_send.py`**: send the one-time launch file in the simple `Date / Time / Patient # / Patient Fir / Patient La / Location / App Type / Email` format.
-- **`run_daily.py`**: run the ongoing daily production flow from Action + Actual + Mailchimp.
+- **`run_daily.py`**: run the ongoing daily production flow from Action + Actual + Mailchimp, and automatically generate a simulation workbook first.
 
 Those are the only three scripts you need for the planned workflow.
 
@@ -32,7 +32,27 @@ Actual send:
 python3 run_daily.py
 ```
 
-This uses the Action + Actual + Mailchimp inputs and sends real patient emails.
+This uses the Action + Actual + Mailchimp inputs, writes a fresh simulation workbook, and then sends real patient emails.
+
+## Folder Layout
+
+All working paths are now derived from the project root automatically.
+
+```text
+daily-patient-reminder/
+├── Excel/
+│   ├── action.xlsx
+│   ├── actual.xlsx
+│   └── processed_mailchimp_export.xlsx
+├── logs/
+├── simulations/
+├── config.py
+├── run_daily.py
+└── simulate_daily.py
+```
+
+If you move the repo to another device, the scripts use that new project folder as the root automatically.  
+Optional override: set `REMINDER_ROOT_FOLDER` if you want to point the app at a different root.
 
 ### One-time launch file
 
@@ -106,10 +126,10 @@ No other env vars are required unless you override paths (then the corresponding
 You don’t have to use environment variables: defaults in `config.py` work if your files and column names match. For the **8 PM run** (cron or Task Scheduler), the environment is often empty, so the recommended approach is:
 
 1. **Copy `.env.example` to `.env`** in the project folder.
-2. **Fill in** at least `GRAPH_CLIENT_ID` (and optionally paths or `GRAPH_TENANT_ID`). See the comments in `.env.example`.
+2. **Fill in** only the Graph / Outlook values you need such as `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_TENANT_ID`, and `GRAPH_MAILBOX_USER`.
 3. **Do not commit `.env`** (it’s in `.gitignore`). Commit only `.env.example`.
 
-When you run `run_daily.py`, it loads `.env` into the environment before reading `config.py`, so any variable you set in `.env` overrides the defaults. If you prefer not to use a file, set the same variables in your shell or in the scheduled task instead.
+You no longer need `.env` for file paths. Input files are expected under `Excel/`, logs go under `logs/`, and simulation workbooks go under `simulations/`.
 
 ---
 
