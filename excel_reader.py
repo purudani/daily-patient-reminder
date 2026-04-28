@@ -51,6 +51,7 @@ from config import (
     COL_RESCHEDULE_INTO,
     COL_RESCHEDULE_INTO_ALIASES,
     COL_RESCHEDULE_TIME,
+    DEFAULT_RECIPIENT_EMAIL,
     LOCATION_MAP,
     MAILCHIMP_EXPORT_PATH,
     MAILCHIMP_SHEET_NAME,
@@ -58,6 +59,7 @@ from config import (
     REFERENCE_DATE,
     SKIP_BLANK_PN,
     SKIP_FIRST_N_ROWS,
+    SKIP_TRAILING_ACTION_TOTAL_ROW,
     SKIP_NEXT_DAY,
     SKIP_SAME_DAY,
 )
@@ -179,6 +181,31 @@ def _cell_value(row: Any, col: str, df_columns: list) -> Any:
     return None
 
 
+def _is_blank_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and pd.isna(value):
+        return True
+    return not str(value).strip()
+
+
+def _looks_like_trailing_total_row(row: Any, cols: list) -> bool:
+    values = [v for v in row.tolist() if not _is_blank_value(v)]
+    if not values:
+        return True
+
+    text_values = [str(v).strip().lower() for v in values]
+    if any(v == "total" or v.startswith("total ") or " total" in v for v in text_values):
+        return True
+
+    action_val = _cell_value(row, COL_ACTION, cols)
+    date_val = _cell_value(row, COL_APPT_DATE, cols)
+    time_val = _cell_value(row, COL_APPT_TIME, cols)
+    if _is_blank_value(action_val) and _is_blank_value(date_val) and _is_blank_value(time_val):
+        return True
+    return False
+
+
 def _has_newer_value(row: Any, cols: list) -> Any:
     for alias in _HAS_NEWER_ALIASES:
         v = _cell_value(row, alias, cols)
@@ -249,6 +276,12 @@ def load_action_df() -> pd.DataFrame:
     # Scheduler export tab names change daily; always consume the first tab.
     df = pd.read_excel(path, sheet_name=0, header=SKIP_FIRST_N_ROWS)
     df = _normalize_columns(df)
+    if SKIP_TRAILING_ACTION_TOTAL_ROW and not df.empty:
+        cols = list(df.columns)
+        last_idx = df.index[-1]
+        if _looks_like_trailing_total_row(df.iloc[-1], cols):
+            logger.info("Skipping trailing Action total/summary row at index %s", last_idx)
+            df = df.iloc[:-1].copy()
     return df
 
 
@@ -439,6 +472,10 @@ def _action_row_to_record(
                 break
     email = info.get("email") or ""
     name = info.get("name") or ""
+    mailchimp_email = email
+    default_recipient = (DEFAULT_RECIPIENT_EMAIL or "").strip()
+    if default_recipient:
+        email = default_recipient
 
     ad_col, at_col, al_col, aty_col = actual_cols
 
@@ -476,6 +513,7 @@ def _action_row_to_record(
     return {
         "pn": pn,
         "email": email,
+        "mailchimp_email": mailchimp_email,
         "patient_name": name,
         "appt_date": date_str,
         "appt_time": time_str,

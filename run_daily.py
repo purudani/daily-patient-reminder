@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 # Load .env before config is imported (optional; keeps secrets out of repo)
@@ -29,6 +30,11 @@ except ImportError:
     pass
 
 from config import (
+    ACTION_REPORT_PATH,
+    ACTUAL_REPORT_PATH,
+    ARCHIVE_PROCESSED_REPORTS,
+    DAILY_REPORT_EMAIL,
+    DEFAULT_RECIPIENT_EMAIL,
     GRAPH_CLIENT_ID,
     GRAPH_CLIENT_SECRET,
     GRAPH_MAILBOX_USER,
@@ -36,10 +42,12 @@ from config import (
     LOG_FOLDER,
     LOG_INVITES_AND_CHANGES,
     LOCATION_MAP,
+    PROCESSED_REPORT_DATE_FORMAT,
 )
 from excel_reader import evaluate_daily_actions
 from calendar_actions import do_cancel, do_create, do_delete, do_reschedule
 from graph_auth import get_access_token
+from graph_mail import send_html_email
 from simulate_daily import generate_simulation_workbook
 
 
@@ -71,8 +79,168 @@ def setup_logging() -> logging.Logger:
     return logger
 
 
+def _archive_target(path: Path, label: str, now: datetime) -> Path:
+    stamp = now.strftime(PROCESSED_REPORT_DATE_FORMAT or "%Y-%m-%d")
+    base_name = f"{label}_{stamp}"
+    target = path.with_name(f"{base_name}{path.suffix}")
+    if not target.exists():
+        return target
+
+    time_suffix = now.strftime("%H%M%S")
+    target = path.with_name(f"{base_name}_{time_suffix}{path.suffix}")
+    counter = 2
+    while target.exists():
+        target = path.with_name(f"{base_name}_{time_suffix}_{counter}{path.suffix}")
+        counter += 1
+    return target
+
+
+def archive_processed_reports(logger: logging.Logger) -> list[str]:
+    """Rename processed Action/Actual input workbooks after a successful run."""
+    if not ARCHIVE_PROCESSED_REPORTS:
+        logger.info("Processed report archiving is disabled.")
+        return []
+
+    archived: list[str] = []
+    seen_paths: set[Path] = set()
+    now = datetime.now()
+    for label, raw_path in (
+        ("action", ACTION_REPORT_PATH),
+        ("actual", ACTUAL_REPORT_PATH),
+    ):
+        source = Path(raw_path).expanduser()
+        resolved = source.resolve(strict=False)
+        if resolved in seen_paths:
+            logger.info("Skipping duplicate %s report archive path: %s", label, source)
+            continue
+        seen_paths.add(resolved)
+
+        if not source.exists():
+            logger.warning("Processed %s report not found for archiving: %s", label, source)
+            continue
+
+        target = _archive_target(source, label, now)
+        source.rename(target)
+        archived.append(f"{source} -> {target}")
+        logger.info("Archived %s report: %s -> %s", label, source, target)
+
+    return archived
+
+
+def _report_html(
+    *,
+    status: str,
+    started_at: datetime,
+    finished_at: datetime,
+    actions_count: int,
+    created: int,
+    rescheduled: int,
+    cancelled: int,
+    errors: int,
+    simulation_path: str,
+    archived_reports: list[str],
+    error_message: str,
+) -> str:
+    duration_seconds = max(0, int((finished_at - started_at).total_seconds()))
+    recipient_mode = (
+        f"Override active: all patient emails sent to {DEFAULT_RECIPIENT_EMAIL}"
+        if (DEFAULT_RECIPIENT_EMAIL or "").strip()
+        else "Mailchimp recipients"
+    )
+    archived_text = "<br/>".join(escape(p) for p in archived_reports) or "No files archived"
+    error_text = escape(error_message) if error_message else "None"
+    color = "#0f7a3b" if status == "SUCCESS" else "#b42318"
+
+    rows = [
+        ("Status", status),
+        ("Started", started_at.strftime("%Y-%m-%d %H:%M:%S")),
+        ("Finished", finished_at.strftime("%Y-%m-%d %H:%M:%S")),
+        ("Duration", f"{duration_seconds} seconds"),
+        ("Recipient mode", recipient_mode),
+        ("Actions evaluated for send", str(actions_count)),
+        ("Created", str(created)),
+        ("Rescheduled", str(rescheduled)),
+        ("Cancelled/deleted", str(cancelled)),
+        ("Errors", str(errors)),
+        ("Simulation workbook", simulation_path or "Not generated"),
+    ]
+    table_rows = "\n".join(
+        "<tr>"
+        f"<td style=\"padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;\">{escape(label)}</td>"
+        f"<td style=\"padding:8px 12px;border-bottom:1px solid #e5e7eb;\">{escape(value)}</td>"
+        "</tr>"
+        for label, value in rows
+    )
+
+    return f"""<html>
+<body style="font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;font-size:14px;line-height:1.5;">
+  <h2 style="margin:0 0 12px 0;color:{color};">Daily patient reminder: {escape(status)}</h2>
+  <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:520px;">
+    {table_rows}
+  </table>
+  <h3 style="margin:18px 0 8px 0;">Archived input files</h3>
+  <p style="margin:0;">{archived_text}</p>
+  <h3 style="margin:18px 0 8px 0;">Failure details</h3>
+  <p style="margin:0;white-space:pre-wrap;">{error_text}</p>
+</body>
+</html>"""
+
+
+def send_completion_report(
+    access_token: str,
+    logger: logging.Logger,
+    *,
+    status: str,
+    started_at: datetime,
+    finished_at: datetime,
+    actions_count: int,
+    created: int,
+    rescheduled: int,
+    cancelled: int,
+    errors: int,
+    simulation_path: str,
+    archived_reports: list[str],
+    error_message: str,
+) -> None:
+    report_to = (DAILY_REPORT_EMAIL or "").strip()
+    if not report_to:
+        logger.info("Daily completion report email is disabled.")
+        return
+
+    subject = f"Daily patient reminder {status} - {finished_at.strftime('%Y-%m-%d')}"
+    send_html_email(
+        access_token,
+        to_address=report_to,
+        to_name=report_to,
+        subject=subject,
+        html_body=_report_html(
+            status=status,
+            started_at=started_at,
+            finished_at=finished_at,
+            actions_count=actions_count,
+            created=created,
+            rescheduled=rescheduled,
+            cancelled=cancelled,
+            errors=errors,
+            simulation_path=simulation_path,
+            archived_reports=archived_reports,
+            error_message=error_message,
+        ),
+    )
+    logger.info("Completion report sent to %s", report_to)
+
+
 def main() -> int:
     logger = setup_logging()
+    started_at = datetime.now()
+    token: str | None = None
+    simulation_path = ""
+    actions_count = 0
+    created = rescheduled = cancelled = errors = 0
+    archived_reports: list[str] = []
+    error_message = ""
+    exit_code = 1
+
     if not (GRAPH_CLIENT_ID and str(GRAPH_CLIENT_ID).strip()):
         logger.error(
             "GRAPH_CLIENT_ID is not set. Set it in .env or environment. See README."
@@ -100,77 +268,122 @@ def main() -> int:
             "Graph mode: delegated (sign-in when prompted). "
             "Set GRAPH_MAILBOX_USER to use /users/{email}/... instead of /me."
         )
+    if (DEFAULT_RECIPIENT_EMAIL or "").strip():
+        logger.warning(
+            "Recipient override active: all patient emails will be sent to %s",
+            DEFAULT_RECIPIENT_EMAIL,
+        )
+
     try:
         evaluation = evaluate_daily_actions()
-        simulation_path = generate_simulation_workbook(evaluation)
+        simulation_path = str(generate_simulation_workbook(evaluation))
         logger.info("Simulation workbook: %s", simulation_path)
 
         actions = evaluation["actions"]
+        actions_count = len(actions)
         logger.info("Actions to process: %d", len(actions))
-        if not actions:
-            return 0
 
-        token = get_access_token()
-        created = rescheduled = cancelled = errors = 0
+        if actions:
+            token = get_access_token()
 
-        for item in actions:
-            action = item["action"]
-            record = item["record"]
-            pn = record.get("pn", "")
-            email = record.get("email", "")
-            try:
-                if action == "create":
-                    if do_create(token, record, LOCATION_MAP):
-                        created += 1
-                        if LOG_INVITES_AND_CHANGES:
-                            logger.info(
-                                "Create sent: PN=%s %s at %s -> %s",
-                                pn,
-                                record.get("appt_date"),
-                                record.get("appt_time"),
-                                email,
-                            )
-                elif action == "reschedule":
-                    if do_reschedule(token, record, LOCATION_MAP):
-                        rescheduled += 1
-                        if LOG_INVITES_AND_CHANGES:
-                            logger.info(
-                                "Reschedule sent: PN=%s %s at %s -> %s",
-                                pn,
-                                record.get("appt_date"),
-                                record.get("appt_time"),
-                                email,
-                            )
-                elif action in ("cancel", "delete"):
-                    # Cancel and Delete are the same: send cancellation to patient and remove from store
-                    cancelled_ok = (
-                        do_cancel(token, record)
-                        if action == "cancel"
-                        else do_delete(token, record)
-                    )
-                    if cancelled_ok:
-                        cancelled += 1
-                        if LOG_INVITES_AND_CHANGES:
-                            logger.info("Cancel/Delete sent: PN=%s", pn)
-                    elif LOG_INVITES_AND_CHANGES:
-                        logger.info(
-                            "Cancel/Delete skipped: PN=%s (no stored invite UID; nothing to cancel)",
-                            pn,
+            for item in actions:
+                action = item["action"]
+                record = item["record"]
+                pn = record.get("pn", "")
+                email = record.get("email", "")
+                try:
+                    if action == "create":
+                        if do_create(token, record, LOCATION_MAP):
+                            created += 1
+                            if LOG_INVITES_AND_CHANGES:
+                                logger.info(
+                                    "Create sent: PN=%s %s at %s -> %s",
+                                    pn,
+                                    record.get("appt_date"),
+                                    record.get("appt_time"),
+                                    email,
+                                )
+                    elif action == "reschedule":
+                        if do_reschedule(token, record, LOCATION_MAP):
+                            rescheduled += 1
+                            if LOG_INVITES_AND_CHANGES:
+                                logger.info(
+                                    "Reschedule sent: PN=%s %s at %s -> %s",
+                                    pn,
+                                    record.get("appt_date"),
+                                    record.get("appt_time"),
+                                    email,
+                                )
+                    elif action in ("cancel", "delete"):
+                        # Cancel and Delete are the same: send cancellation to patient and remove from store
+                        cancelled_ok = (
+                            do_cancel(token, record)
+                            if action == "cancel"
+                            else do_delete(token, record)
                         )
-                else:
-                    logger.warning("Unknown action '%s' for PN=%s; skipping", action, pn)
-            except Exception as e:
-                errors += 1
-                logger.exception("Failed %s for PN=%s: %s", action, pn, e)
+                        if cancelled_ok:
+                            cancelled += 1
+                            if LOG_INVITES_AND_CHANGES:
+                                logger.info("Cancel/Delete sent: PN=%s", pn)
+                        elif LOG_INVITES_AND_CHANGES:
+                            logger.info(
+                                "Cancel/Delete skipped: PN=%s (no stored invite UID; nothing to cancel)",
+                                pn,
+                            )
+                    else:
+                        logger.warning("Unknown action '%s' for PN=%s; skipping", action, pn)
+                except Exception as e:
+                    errors += 1
+                    logger.exception("Failed %s for PN=%s: %s", action, pn, e)
 
-        logger.info("Done: created=%d rescheduled=%d cancelled=%d errors=%d", created, rescheduled, cancelled, errors)
-        return 0 if errors == 0 else 1
+        exit_code = 0 if errors == 0 else 1
+        logger.info(
+            "Done: created=%d rescheduled=%d cancelled=%d errors=%d",
+            created,
+            rescheduled,
+            cancelled,
+            errors,
+        )
+        if exit_code == 0:
+            archived_reports = archive_processed_reports(logger)
     except FileNotFoundError as e:
-        logger.error("File not found: %s", e)
-        return 1
+        error_message = f"File not found: {e}"
+        logger.error("%s", error_message)
+        exit_code = 1
     except Exception as e:
-        logger.exception("Job failed: %s", e)
-        return 1
+        error_message = f"Job failed: {e}"
+        logger.exception("%s", error_message)
+        exit_code = 1
+
+    finished_at = datetime.now()
+    status = "SUCCESS" if exit_code == 0 else "FAILURE"
+    if errors and not error_message:
+        error_message = f"{errors} action(s) failed. See the run log for stack traces."
+
+    try:
+        if (DAILY_REPORT_EMAIL or "").strip():
+            token = token or get_access_token()
+            send_completion_report(
+                token,
+                logger,
+                status=status,
+                started_at=started_at,
+                finished_at=finished_at,
+                actions_count=actions_count,
+                created=created,
+                rescheduled=rescheduled,
+                cancelled=cancelled,
+                errors=errors,
+                simulation_path=simulation_path,
+                archived_reports=archived_reports,
+                error_message=error_message,
+            )
+    except Exception as e:
+        logger.exception("Failed to send completion report: %s", e)
+        if exit_code == 0:
+            exit_code = 1
+
+    return exit_code
 
 
 if __name__ == "__main__":

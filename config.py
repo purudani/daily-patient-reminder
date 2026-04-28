@@ -21,6 +21,11 @@ ACTION_REPORT_PATH = os.path.join(EXCEL_FOLDER, "action.xlsx")
 ACTUAL_REPORT_PATH = os.path.join(EXCEL_FOLDER, "actual.xlsx")
 MAILCHIMP_EXPORT_PATH = os.path.join(EXCEL_FOLDER, "processed_mailchimp_export.xlsx")
 
+# After a successful run_daily.py run, archive the processed Action/Actual input
+# files in Excel/ as action_YYYY-MM-DD.xlsx and actual_YYYY-MM-DD.xlsx.
+ARCHIVE_PROCESSED_REPORTS = True
+PROCESSED_REPORT_DATE_FORMAT = "%Y-%m-%d"
+
 # Scheduler export tab names vary, so the readers always consume the first sheet.
 ACTION_SHEET_NAME = "Action"
 ACTUAL_SHEET_NAME = "Actual"
@@ -44,6 +49,9 @@ SKIP_NEXT_DAY = True  # skip tomorrow's appts; reschedules moved from future -> 
 # Empty => derive from Action sheet header ("Activity between: ..."), fallback to system date.
 REFERENCE_DATE = os.environ.get("REFERENCE_DATE", "").strip()
 SKIP_BLANK_PN = True
+# Scheduler exports include a trailing summary/total row. Keep this enabled to
+# remove that row before daily action evaluation.
+SKIP_TRAILING_ACTION_TOTAL_ROW = True
 # If multiple actions for same appointment, use latest
 MULTIPLE_ACTIONS_USE_LAST = True
 
@@ -119,6 +127,18 @@ EMAIL_PREVIEW_TEXT = os.environ.get(
     "EMAIL_PREVIEW_TEXT",
     "Your appointment at Liberty PT & Wellness is confirmed.",
 )
+
+# Safety/testing override: when set, every run_daily patient invite/cancel goes
+# only to this address, even if Mailchimp has a different email or no email.
+# Set DEFAULT_RECIPIENT_EMAIL= in .env to send to actual Mailchimp recipients.
+DEFAULT_RECIPIENT_EMAIL = os.environ.get(
+    "DEFAULT_RECIPIENT_EMAIL", "ddmittalp@gmail.com"
+).strip()
+
+# End-of-run success/failure report recipient. Set DAILY_REPORT_EMAIL= to disable.
+DAILY_REPORT_EMAIL = os.environ.get(
+    "DAILY_REPORT_EMAIL", "deepak@libertyptnj.com"
+).strip()
 
 # Outlook on the web “Add to calendar” link base (M365 default). Use https://outlook.live.com for Outlook.com.
 OUTLOOK_CALENDAR_WEB_BASE = os.environ.get(

@@ -8,7 +8,7 @@ This document reflects the current code path in `excel_reader.get_actions_to_pro
 START
 |
 +-- Load 3 inputs
-|   +-- Action report
+|   +-- Action report (drop trailing total/summary row when present)
 |   +-- Actual report
 |   +-- Mailchimp export
 |
@@ -50,8 +50,8 @@ START
     |   +-- Yes -> SKIP
     |   +-- No -> continue
     |
-    +-- Is email missing in Mailchimp and SKIP_BLANK_PN enabled?
-    |   +-- Yes -> SKIP
+    +-- Is email missing after Mailchimp lookup/default override?
+    |   +-- Yes and no DEFAULT_RECIPIENT_EMAIL -> SKIP
     |   +-- No -> continue
     |
     +-- If action = reschedule
@@ -121,7 +121,8 @@ Find Actual row for current Action row
 Output record
 |
 +-- pn -> Action.PN
-+-- email -> Mailchimp[PN].Email
++-- email -> DEFAULT_RECIPIENT_EMAIL if set, otherwise Mailchimp[PN].Email
++-- mailchimp_email -> Mailchimp[PN].Email, if found
 +-- patient_name -> Mailchimp Name OR Action Patient Name
 +-- appt_date -> Action.Date
 +-- appt_time -> Action.Time
@@ -136,7 +137,8 @@ Output record
 Output record
 |
 +-- pn -> Action.PN
-+-- email -> Mailchimp[PN].Email
++-- email -> DEFAULT_RECIPIENT_EMAIL if set, otherwise Mailchimp[PN].Email
++-- mailchimp_email -> Mailchimp[PN].Email, if found
 +-- patient_name -> Mailchimp Name OR Action Patient Name
 +-- original_appt_date -> Action.Date
 +-- original_appt_time -> Action.Time
@@ -157,7 +159,8 @@ Output record
 Output record
 |
 +-- pn -> Action.PN
-+-- email -> Mailchimp[PN].Email
++-- email -> DEFAULT_RECIPIENT_EMAIL if set, otherwise Mailchimp[PN].Email
++-- mailchimp_email -> Mailchimp[PN].Email, if found
 +-- patient_name -> Mailchimp Name OR Action Patient Name
 +-- action -> Action.Action
 +-- appt_date -> matched Actual appointment Date
@@ -185,7 +188,7 @@ SKIP when:
 - record build fails
 - resolved appt_type = UNCPT
 - has_newer path resolved appointment date is same-day / next-day per flags
-- email is missing after Mailchimp lookup
+- email is missing after Mailchimp lookup and DEFAULT_RECIPIENT_EMAIL is blank
 - exception: allow a `reschedule` when the original Action appointment date is beyond next day and the resolved appointment is moved into next day
 - exception: if the same appointment has exactly one `create` and one `delete` action in the same run, skip both instead of sending either
 ```

@@ -96,3 +96,46 @@ def send_mail_with_ics(
         to_address,
         subject[:60] + ("..." if len(subject) > 60 else ""),
     )
+
+
+def send_html_email(
+    access_token: str,
+    *,
+    to_address: str,
+    to_name: str | None = None,
+    subject: str,
+    html_body: str,
+    save_to_sent_items: bool = True,
+) -> None:
+    """Send one plain HTML message via Microsoft Graph."""
+    to_address = to_address.strip()
+    if not to_address:
+        raise ValueError("to_address is required")
+
+    recipient: dict[str, Any] = {
+        "emailAddress": {
+            "address": to_address,
+            "name": (to_name or to_address).strip(),
+        }
+    }
+
+    payload = {
+        "message": {
+            "subject": subject,
+            "body": {
+                "contentType": "HTML",
+                "content": html_body,
+            },
+            "toRecipients": [recipient],
+        },
+        "saveToSentItems": save_to_sent_items,
+    }
+
+    url = f"{_user_root()}/sendMail"
+    resp = requests.post(url, json=payload, headers=_headers(access_token), timeout=60)
+    resp.raise_for_status()
+    logger.info(
+        "Sent HTML mail to %s (subject=%s)",
+        to_address,
+        subject[:60] + ("..." if len(subject) > 60 else ""),
+    )

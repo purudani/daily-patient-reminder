@@ -27,7 +27,7 @@ The script creates **only the same three workbook types** you use in production:
 
 We **do not** generate extra “cancel follow-up” files. Those existed only as a shortcut for a second test run; real data is always **Action + Actual + Mailchimp** only.
 
-All confirmation emails go **to** `purudani.2015@gmail.com`.  
+By default, all confirmation emails go **to** `ddmittalp@gmail.com` because `DEFAULT_RECIPIENT_EMAIL` is set in `config.py`. Set `DEFAULT_RECIPIENT_EMAIL=` in `.env` to test real Mailchimp recipients.
 They are sent **from** the mailbox in **`GRAPH_MAILBOX_USER`** (app-only) or the account you sign in with (delegated).
 
 ### Invite audit log (Excel)
@@ -80,6 +80,7 @@ EVENT_ID_STORE_PATH=/full/path/to/daily-patient-reminder/dummy_event_id_store.js
 
 3. Check **`invite_sent_log.xlsx`**: **3 rows** — `create`, `reschedule`, `reschedule` (the third line is reschedule fed from **Actual**).
 4. Check **`reminder_YYYYMMDD.log`** and the inbox for **invite.ics** on each message.
+5. After a successful `run_daily.py` run, `Excel/action.xlsx` and `Excel/actual.xlsx` are renamed with the run date, so place fresh copies back under those names before another run.
 
 ## 4. Testing cancel/delete (optional second run)
 

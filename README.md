@@ -32,7 +32,9 @@ Actual send:
 python3 run_daily.py
 ```
 
-This uses the Action + Actual + Mailchimp inputs, writes a fresh simulation workbook, and then sends real patient emails.
+This uses the Action + Actual + Mailchimp inputs, writes a fresh simulation workbook, and then sends the configured patient emails.
+
+Current safety default: `DEFAULT_RECIPIENT_EMAIL` is set to `ddmittalp@gmail.com`, so `run_daily.py` sends every patient invite/cancel only to that address. Set `DEFAULT_RECIPIENT_EMAIL=` in `.env` when you are ready to send to the actual Mailchimp recipients.
 
 ## Folder Layout
 
@@ -89,6 +91,7 @@ This sends real patient emails and stores invite IDs in `event_id_store.json` fo
    - If the same appointment has exactly one **Create** and one **Delete** in the same run, skips both.
    - **Has newer** rows are resolved against the **Actual** sheet using **PN + Action Date + Action Time**, then narrowed by appointment date/time when needed.
    - Reschedules moved from a future date into **next day** still send an updated invite even when `SKIP_NEXT_DAY=True`.
+   - Removes the trailing Action export total/summary row before processing.
 
 3. **Location codes** → full address in the email:
    - **Location** column holds codes (LIB, LIBN, LIBJ). The tool maps them to full addresses in the confirmation and calendar invite (see `config.LOCATION_MAP`).
@@ -99,6 +102,8 @@ This sends real patient emails and stores invite IDs in `event_id_store.json` fo
    - **Cancel** / **Delete**: short HTML + **`cancel.ics`**; then remove the stored UID.
 
 5. **Logging**: Writes a daily log file, optional **Excel audit** (`invite_sent_log.xlsx` / `INVITE_LOG_PATH`: one row per email sent), and (optionally) logs every invite/change to the daily log file.
+
+6. **End-of-run cleanup/reporting**: On a clean `run_daily.py` run, renames processed inputs to `Excel/action_YYYY-MM-DD.xlsx` and `Excel/actual_YYYY-MM-DD.xlsx`, then sends a success/failure report to `DAILY_REPORT_EMAIL`.
 
 ---
 
@@ -116,6 +121,8 @@ This sends real patient emails and stores invite IDs in `event_id_store.json` fo
 | 8 | **App-only (no sign-in)** | `GRAPH_CLIENT_SECRET`, `GRAPH_TENANT_ID`, **`GRAPH_MAILBOX_USER`** (organizer email). Azure: Application permissions + admin consent. |
 | 9 | **Delegated (sign-in)** | Leave `GRAPH_CLIENT_SECRET` empty; optional `GRAPH_TENANT_ID`. First run: device code or browser; token may cache. |
 | 10 | **`GRAPH_MAILBOX_USER`** | Mailbox that sends mail (`/users/{email}/sendMail`); **required** with app-only. Optional with delegated if you rely on `/me` (see `graph_user.py`). |
+| 11 | **Test recipient override** | `DEFAULT_RECIPIENT_EMAIL` defaults to `ddmittalp@gmail.com`; set it empty to use Mailchimp emails. |
+| 12 | **Completion report** | `DAILY_REPORT_EMAIL` defaults to `deepak@libertyptnj.com`. |
 
 No other env vars are required unless you override paths (then the corresponding `*_PATH` / `*_FOLDER` vars).
 
@@ -186,6 +193,8 @@ In **`config.py`** (or via environment variables):
 | Actual sheet name or index | `ACTUAL_SHEET_NAME` | `"Actual"` or e.g. `"3-16 actual appt"` |
 | Mailchimp export path | `MAILCHIMP_EXPORT_PATH` | `processed_mailchimp_export.xlsx` |
 | Mailchimp sheet | `MAILCHIMP_SHEET_NAME` | `0` (first sheet) |
+| Test recipient override | `DEFAULT_RECIPIENT_EMAIL` | `ddmittalp@gmail.com`; empty means use Mailchimp recipients |
+| Completion report recipient | `DAILY_REPORT_EMAIL` | `deepak@libertyptnj.com` |
 
 ### 2. Excel column names
 
