@@ -42,7 +42,6 @@ from config import (
     LOG_FOLDER,
     LOG_INVITES_AND_CHANGES,
     LOCATION_MAP,
-    PROCESSED_REPORT_DATE_FORMAT,
 )
 from excel_reader import evaluate_daily_actions
 from calendar_actions import do_cancel, do_create, do_delete, do_reschedule
@@ -80,17 +79,16 @@ def setup_logging() -> logging.Logger:
 
 
 def _archive_target(path: Path, label: str, now: datetime) -> Path:
-    stamp = now.strftime(PROCESSED_REPORT_DATE_FORMAT or "%Y-%m-%d")
-    base_name = f"{label}_{stamp}"
+    """Rename to {YYYYMMDD}_{HHMMSS}_{label}.xlsx so automation can sort by timestamp prefix."""
+    ts = now.strftime("%Y%m%d_%H%M%S")
+    base_name = f"{ts}_{label}"
     target = path.with_name(f"{base_name}{path.suffix}")
     if not target.exists():
         return target
 
-    time_suffix = now.strftime("%H%M%S")
-    target = path.with_name(f"{base_name}_{time_suffix}{path.suffix}")
     counter = 2
     while target.exists():
-        target = path.with_name(f"{base_name}_{time_suffix}_{counter}{path.suffix}")
+        target = path.with_name(f"{base_name}_{counter}{path.suffix}")
         counter += 1
     return target
 

@@ -331,7 +331,13 @@ def load_mailchimp_lookup() -> dict[str, dict[str, str]]:
             if first is not None and not (isinstance(first, float) and pd.isna(first)):
                 parts.append(str(first).strip())
             display_name = " ".join(parts) if parts else email
-        lookup[pn] = {"email": email, "name": display_name}
+        first_raw = _cell_value(row, COL_MAILCHIMP_FIRST, cols)
+        first_name = (
+            str(first_raw).strip()
+            if first_raw is not None and not (isinstance(first_raw, float) and pd.isna(first_raw))
+            else ""
+        )
+        lookup[pn] = {"email": email, "name": display_name, "first_name": first_name}
     return lookup
 
 
@@ -472,6 +478,7 @@ def _action_row_to_record(
                 break
     email = info.get("email") or ""
     name = info.get("name") or ""
+    first_name = (info.get("first_name") or "").strip()
     mailchimp_email = email
     default_recipient = (DEFAULT_RECIPIENT_EMAIL or "").strip()
     if default_recipient:
@@ -515,6 +522,7 @@ def _action_row_to_record(
         "email": email,
         "mailchimp_email": mailchimp_email,
         "patient_name": name,
+        "first_name": first_name,
         "appt_date": date_str,
         "appt_time": time_str,
         "location": loc_code,

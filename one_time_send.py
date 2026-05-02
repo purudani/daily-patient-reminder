@@ -5,8 +5,8 @@ One-time launch sender for a simple workbook with these columns:
 - Date
 - Time
 - Patient #
-- Patient Fir
-- Patient La
+- Patient First Name
+- Patient Last Name
 - Location
 - App Type
 - Email
@@ -40,8 +40,8 @@ from graph_auth import get_access_token
 DATE_COL = "Date"
 TIME_COL = "Time"
 PN_COL = "Patient #"
-FIRST_COL = "Patient Fir"
-LAST_COL = "Patient La"
+FIRST_COL = "Patient First Name"
+LAST_COL = "Patient Last Name"
 LOCATION_COL = "Location"
 TYPE_COL = "App Type"
 EMAIL_COL = "Email"

@@ -44,6 +44,7 @@ def send_mail_with_ics(
     ics_filename: str = "invite.ics",
     calendar_method: str = "REQUEST",
     save_to_sent_items: bool = True,
+    ics_content_id: str | None = None,
 ) -> None:
     """
     Send one message with HTML body and a calendar attachment.
@@ -64,6 +65,9 @@ def send_mail_with_ics(
         "contentBytes": base64.b64encode(ics_bytes).decode("ascii"),
         "isInline": False,
     }
+    cid = (ics_content_id or "").strip()
+    if cid:
+        attachment["contentId"] = cid
 
     recipient: dict[str, Any] = {
         "emailAddress": {

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from event_id_store import (
@@ -37,23 +37,72 @@ def _human_readable_datetime(dt: datetime) -> str:
     return f"{date_part} at {t}"
 
 
+def _first_name_from_record(record: dict[str, Any]) -> str:
+    fn = (record.get("first_name") or "").strip()
+    if fn:
+        return fn
+    name = (record.get("patient_name") or "").strip()
+    if not name or "@" in name:
+        return "there"
+    if "," in name:
+        after = name.split(",", 1)[1].strip()
+        return (after.split() or ["there"])[0]
+    return (name.split() or ["there"])[0]
+
+
+def _parse_record_datetime(date_str: Any, time_str: Any) -> datetime | None:
+    if date_str is None or time_str is None:
+        return None
+    if isinstance(date_str, datetime):
+        return date_str
+    ds = str(date_str).strip()
+    ts = str(time_str).strip()
+    if not ds or not ts:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M"):
+        try:
+            return datetime.strptime(f"{ds} {ts}".strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _subject_and_preview(action_kind: str, display_when: str) -> tuple[str, str]:
+    k = (action_kind or "create").lower()
+    org = "Liberty PT & Wellness"
+    if k == "reschedule":
+        return (
+            f"Appointment Changed - {display_when}",
+            f"Appointment Rescheduled to {display_when} at {org}",
+        )
+    if k == "cancel":
+        return (
+            f"Appointment Canceled - {display_when}",
+            f"Appointment Canceled {display_when} at {org}",
+        )
+    return (
+        f"New Appointment - {display_when}",
+        f"New Appointment scheduled {display_when} at {org}",
+    )
+
+
 def _build_confirmation_html(
     *,
+    record: dict[str, Any],
     start_dt: datetime,
     loc_address: str,
-    duration_minutes: int,
-    website_url: str,
-    phone: str,
     preview_text: str,
     logo_url: str,
     action_kind: str,
+    previous_display_when: str | None,
+    calendar_button_label: str,
+    ics_filename: str,
+    ics_cid: str,
+    phone_display: str,
+    phone_href: str,
 ) -> str:
     display_when = _human_readable_datetime(start_dt)
-    duration_note = (
-        "This visit is scheduled for 30 minutes."
-        if duration_minutes == 30
-        else "This visit is scheduled for 60 minutes."
-    )
+    fn = html.escape(_first_name_from_record(record))
 
     if logo_url:
         safe_logo = html.escape(logo_url, quote=True)
@@ -63,72 +112,186 @@ def _build_confirmation_html(
         )
     else:
         logo_block = (
-            '<div style="font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;text-shadow:0 1px 2px rgba(0,0,0,0.15);">'
+            '<div class="lpw-brand" style="font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;text-shadow:0 1px 2px rgba(0,0,0,0.15);">'
             "Liberty PT &amp; Wellness</div>"
             '<div style="font-size:12px;color:rgba(255,255,255,0.9);margin-top:6px;">Physical Therapy</div>'
         )
 
     safe_preview = html.escape(preview_text)
     preheader = (
-        f'<div style="display:none;font-size:1px;color:#fefefe;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">'
-        f"{safe_preview}</div>"
+        '<div style="display:none;font-size:1px;color:#fefefe;line-height:1px;max-height:0;max-width:0;'
+        f'opacity:0;overflow:hidden;">{safe_preview}</div>'
     )
 
     action_kind = (action_kind or "create").lower()
     if action_kind == "reschedule":
-        intro_line = "Your appointment at <strong>Liberty PT &amp; Wellness</strong> has been updated."
+        intro_line = (
+            f"Dear {fn},<br/><br/>"
+            "Your appointment at <strong>Liberty PT &amp; Wellness</strong> has been updated."
+        )
     else:
-        intro_line = "This email is to confirm your appointment at <strong>Liberty PT &amp; Wellness</strong>."
+        intro_line = (
+            f"Dear {fn},<br/><br/>"
+            "This email is to confirm your appointment at <strong>Liberty PT &amp; Wellness</strong>."
+        )
 
-    return f"""{preheader}
+    if previous_display_when:
+        time_block = f"""
+                <p style="margin:0 0 8px 0;font-size:15px;color:#5a7a8c;text-transform:uppercase;letter-spacing:0.06em;">Appointment time</p>
+                <p class="lpw-when" style="margin:0 0 10px 0;font-size:22px;line-height:1.35;">
+                  <span style="text-decoration:line-through;color:#7a8a96;">{html.escape(previous_display_when)}</span><br/>
+                  <span style="font-weight:700;color:#1a4d6e;">{html.escape(display_when)}</span>
+                </p>"""
+    else:
+        time_block = f"""
+                <p style="margin:0 0 8px 0;font-size:15px;color:#5a7a8c;text-transform:uppercase;letter-spacing:0.06em;">Appointment time</p>
+                <p class="lpw-when" style="margin:0;font-size:22px;font-weight:700;color:#1a4d6e;line-height:1.35;">{html.escape(display_when)}</p>"""
+
+    cid_href = html.escape(f"cid:{ics_cid}", quote=True)
+    safe_phone_d = html.escape(phone_display)
+    safe_fn = html.escape(ics_filename)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style type="text/css">
+@media only screen and (max-width: 600px) {{
+  .lpw-body {{ font-size: 19px !important; line-height: 1.65 !important; }}
+  .lpw-when {{ font-size: 24px !important; }}
+  .lpw-btn {{ font-size: 19px !important; padding: 18px 28px !important; }}
+  .lpw-brand {{ font-size: 24px !important; }}
+}}
+</style>
+</head>
+<body style="margin:0;padding:0;background:#f4f7f9;">
+{preheader}
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f4f7f9;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-  <tr><td align="center" style="padding:24px 16px;">
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(26,77,110,0.08);">
+  <tr><td align="center" style="padding:20px 12px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(26,77,110,0.08);">
       <tr>
-        <td style="background:linear-gradient(135deg,#1a4d6e 0%,#2d6a8f 100%);padding:28px 32px;text-align:center;color:#ffffff;">
+        <td style="background:linear-gradient(135deg,#1a4d6e 0%,#2d6a8f 100%);padding:28px 24px;text-align:center;color:#ffffff;">
           {logo_block}
         </td>
       </tr>
       <tr>
-        <td style="padding:32px 36px 24px 36px;color:#333333;font-size:16px;line-height:1.6;">
-          <p style="margin:0 0 16px 0;">{intro_line}</p>
+        <td class="lpw-body" style="padding:28px 24px 24px 24px;color:#222222;font-size:18px;line-height:1.65;">
+          <p style="margin:0 0 18px 0;">{intro_line}</p>
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f0f6fa;border-radius:8px;margin:20px 0;">
             <tr>
-              <td style="padding:20px 24px;">
-                <p style="margin:0 0 8px 0;font-size:14px;color:#5a7a8c;text-transform:uppercase;letter-spacing:0.06em;">Appointment time</p>
-                <p style="margin:0;font-size:20px;font-weight:600;color:#1a4d6e;">{display_when}</p>
-                <p style="margin:12px 0 0 0;font-size:14px;color:#5a7a8c;text-transform:uppercase;letter-spacing:0.06em;">Location</p>
-                <p style="margin:4px 0 0 0;font-size:17px;font-weight:600;color:#333;">{html.escape(str(loc_address))}</p>
+              <td style="padding:22px 22px;">
+                {time_block}
+                <p style="margin:16px 0 0 0;font-size:15px;color:#5a7a8c;text-transform:uppercase;letter-spacing:0.06em;">Location</p>
+                <p style="margin:6px 0 0 0;font-size:19px;font-weight:600;color:#333;">{html.escape(str(loc_address))}</p>
               </td>
             </tr>
           </table>
-          <p style="margin:0 0 20px 0;font-size:14px;color:#555;">{duration_note}</p>
-          <p style="margin:0 0 20px 0;font-size:14px;color:#555;">Please use the attached <strong>invite.ics</strong> file to add this appointment to your calendar.</p>
-          <p style="margin:0 0 20px 0;">If you can&rsquo;t make it, please let us know <strong>at least 48 hours in advance</strong> so we can offer that time to another patient on our waiting list. You can reply to this email or call us directly at <a href="tel:+12013661115" style="color:#1a4d6e;font-weight:600;">{phone}</a>.</p>
-          <p style="margin:0;text-align:center;padding-top:8px;">
-            <a href="{html.escape(website_url, quote=True)}" style="display:inline-block;background:#1a4d6e;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600;font-size:15px;">{html.escape(website_url.replace("https://", "").replace("http://", "").rstrip("/"))}</a>
-          </p>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:24px 0 8px 0;">
+            <tr>
+              <td align="center">
+                <a class="lpw-btn" href="{cid_href}" style="display:inline-block;background:#1a4d6e;color:#ffffff;text-decoration:none;padding:16px 32px;border-radius:10px;font-weight:700;font-size:18px;">{html.escape(calendar_button_label)}</a>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:16px 0 20px 0;font-size:16px;color:#444;">Open the attached <strong>{safe_fn}</strong> file to add this appointment to your calendar (many phones: tap the attachment at the bottom of this email).</p>
+          <p style="margin:0 0 20px 0;">If you can&rsquo;t make it, please let us know <strong>at least 48 hours in advance</strong> so we can offer that time to another patient on our waiting list. You can reply to this email or call us at <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>.</p>
         </td>
       </tr>
       <tr>
-        <td style="padding:20px 36px;background:#f8fafb;border-top:1px solid #e8eef2;text-align:center;font-size:12px;color:#8899a6;">
-          <strong>Liberty PT &amp; Wellness</strong><br/>
-          <a href="{html.escape(website_url, quote=True)}" style="color:#5a7a8c;">{html.escape(website_url)}</a>
+        <td style="padding:20px 24px;background:#f8fafb;border-top:1px solid #e8eef2;text-align:center;font-size:14px;color:#8899a6;">
+          <strong>Liberty PT &amp; Wellness</strong>
         </td>
       </tr>
     </table>
   </td></tr>
 </table>
-"""
+</body>
+</html>"""
 
 
-def _build_cancel_html(*, display_when: str, website_url: str, phone: str) -> str:
-    return f"""<html><body style="font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.6;color:#333;">
-<p>Your appointment at <strong>Liberty PT &amp; Wellness</strong> scheduled for <strong>{html.escape(display_when)}</strong> has been <strong>cancelled</strong>.</p>
-<p>We attached <strong>cancel.ics</strong> so your calendar can remove or update the event if it was already added.</p>
-<p>If you have questions, reply to this email or call <a href="tel:+12013661115">{html.escape(phone)}</a>.</p>
-<p><a href="{html.escape(website_url, quote=True)}">{html.escape(website_url)}</a></p>
-</body></html>"""
+def _build_cancel_html(
+    *,
+    record: dict[str, Any],
+    display_when: str,
+    preview_text: str,
+    phone_display: str,
+    phone_href: str,
+    ics_cid: str,
+) -> str:
+    fn = html.escape(_first_name_from_record(record))
+    safe_preview = html.escape(preview_text)
+    preheader = (
+        '<div style="display:none;font-size:1px;color:#fefefe;line-height:1px;max-height:0;max-width:0;'
+        f'opacity:0;overflow:hidden;">{safe_preview}</div>'
+    )
+    cid_href = html.escape(f"cid:{ics_cid}", quote=True)
+    safe_phone_d = html.escape(phone_display)
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style type="text/css">
+@media only screen and (max-width: 600px) {{
+  .lpw-body {{ font-size: 19px !important; line-height: 1.65 !important; }}
+  .lpw-btn {{ font-size: 19px !important; padding: 18px 28px !important; }}
+}}
+</style>
+</head>
+<body style="margin:0;padding:0;background:#f4f7f9;">
+{preheader}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f4f7f9;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+  <tr><td align="center" style="padding:20px 12px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(26,77,110,0.08);">
+      <tr>
+        <td style="background:linear-gradient(135deg,#1a4d6e 0%,#2d6a8f 100%);padding:28px 24px;text-align:center;color:#ffffff;">
+          <div style="font-size:22px;font-weight:700;">Liberty PT &amp; Wellness</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.9);margin-top:6px;">Physical Therapy</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="lpw-body" style="padding:28px 24px;color:#222222;font-size:18px;line-height:1.65;">
+          <p style="margin:0 0 16px 0;">Dear {fn},</p>
+          <p style="margin:0 0 16px 0;">Your appointment at <strong>Liberty PT &amp; Wellness</strong> scheduled for <strong>{html.escape(display_when)}</strong> has been <strong>cancelled</strong>.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:8px 0 16px 0;">
+            <tr>
+              <td align="center">
+                <a class="lpw-btn" href="{cid_href}" style="display:inline-block;background:#1a4d6e;color:#ffffff;text-decoration:none;padding:16px 32px;border-radius:10px;font-weight:700;font-size:18px;">Remove from Calendar</a>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:0 0 16px 0;">We attached <strong>cancel.ics</strong> so your calendar can remove this event if it was already added (tap the attachment on your phone).</p>
+          <p style="margin:0;">If you have questions, reply to this email or call <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>.</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:20px 24px;background:#f8fafb;border-top:1px solid #e8eef2;text-align:center;font-size:14px;color:#8899a6;">
+          <strong>Liberty PT &amp; Wellness</strong>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+
+def _slot_from_store_key(key: str) -> tuple[str, str] | None:
+    """
+    Recover (appt_date, appt_time) from keys like ``12345_2025-04-01_09:00:00``.
+    Used when canceling against legacy store rows that lack last_appt_* metadata.
+    """
+    try:
+        parts = str(key).rsplit("_", 2)
+        if len(parts) != 3:
+            return None
+        _pn, d, t = parts
+        if len(d) == 10 and d[4] == "-" and d[7] == "-" and len(t) >= 5:
+            return d, t
+    except Exception:
+        pass
+    return None
 
 
 def _appointment_key(record: dict[str, Any]) -> str:
@@ -140,18 +303,21 @@ def _appointment_key(record: dict[str, Any]) -> str:
 
 
 def _build_common_event_params(
-    record: dict[str, Any], location_map: dict[str, str], *, action_kind: str
+    record: dict[str, Any],
+    location_map: dict[str, str],
+    *,
+    action_kind: str,
+    duration_minutes_override: int | None = None,
 ) -> dict[str, Any]:
     from config import (
         APPOINTMENT_TYPE_DURATION_MINUTES,
-        CONFIRMATION_PHONE,
         DEFAULT_DURATION_MINUTES,
         EMAIL_LOGO_URL,
-        EMAIL_PREVIEW_TEXT,
+        ICS_INVITE_CONTENT_ID,
         MT30_DURATION_MINUTES,
         REMINDER_MINUTES_BEFORE,
         TIMEZONE,
-        WEBSITE_URL,
+        phone_for_location_code,
     )
 
     date_str = record.get("appt_date") or record.get("ApptDate") or record.get("Date") or ""
@@ -159,45 +325,60 @@ def _build_common_event_params(
     loc_code = (record.get("location") or record.get("Location") or "LIB").strip().upper()
     loc_address = record.get("location_address") or location_map.get(loc_code) or loc_code
     appt_type = (record.get("appt_type") or record.get("ApptType") or record.get("Type") or "").strip().upper()
-    duration = APPOINTMENT_TYPE_DURATION_MINUTES.get(
-        appt_type,
-        MT30_DURATION_MINUTES if appt_type == "MT30" else DEFAULT_DURATION_MINUTES,
-    )
+    if duration_minutes_override is not None:
+        duration = int(duration_minutes_override)
+    else:
+        duration = APPOINTMENT_TYPE_DURATION_MINUTES.get(
+            appt_type,
+            MT30_DURATION_MINUTES if appt_type == "MT30" else DEFAULT_DURATION_MINUTES,
+        )
 
-    try:
-        if isinstance(date_str, datetime):
-            start_dt = date_str
-        else:
-            start_dt = datetime.strptime(f"{date_str} {time_str}".strip(), "%Y-%m-%d %H:%M:%S")
-    except Exception:
-        try:
-            start_dt = datetime.strptime(f"{date_str} {time_str}".strip(), "%m/%d/%Y %H:%M:%S")
-        except Exception:
-            try:
-                start_dt = datetime.strptime(f"{date_str} {time_str}".strip(), "%m/%d/%Y %H:%M")
-            except Exception:
-                start_dt = datetime.now()
-
-    from datetime import timedelta
+    if isinstance(date_str, datetime):
+        start_dt = date_str
+    else:
+        parsed = _parse_record_datetime(date_str, time_str)
+        start_dt = parsed if parsed is not None else datetime.now()
 
     end_dt = start_dt + timedelta(minutes=duration)
     display_when = _human_readable_datetime(start_dt)
-    if action_kind.lower() == "reschedule":
-        subject = f"Appointment Updated - {display_when}"
-    else:
-        subject = f"Appointment Confirmation - {display_when}"
+    subject, preview = _subject_and_preview(action_kind, display_when)
 
-    body = _build_confirmation_html(
-        start_dt=start_dt,
-        loc_address=loc_address,
-        duration_minutes=duration,
-        website_url=WEBSITE_URL.rstrip("/") + "/",
-        phone=CONFIRMATION_PHONE,
-        preview_text=EMAIL_PREVIEW_TEXT,
-        logo_url=EMAIL_LOGO_URL,
-        action_kind=action_kind,
+    ak = (action_kind or "create").lower()
+    previous_display_when: str | None = None
+    if ak == "reschedule":
+        prev_dt = _parse_record_datetime(
+            record.get("original_appt_date"),
+            record.get("original_appt_time"),
+        )
+        if prev_dt is not None:
+            previous_display_when = _human_readable_datetime(prev_dt)
+
+    phone_display, phone_href = phone_for_location_code(loc_code)
+
+    if ak == "cancel":
+        body: str = "<html><body></body></html>"
+    else:
+        cal_label = "Update Calendar" if ak == "reschedule" else "Add to Calendar"
+        body = _build_confirmation_html(
+            record=record,
+            start_dt=start_dt,
+            loc_address=loc_address,
+            preview_text=preview,
+            logo_url=EMAIL_LOGO_URL,
+            action_kind=action_kind,
+            previous_display_when=previous_display_when,
+            calendar_button_label=cal_label,
+            ics_filename="invite.ics",
+            ics_cid=ICS_INVITE_CONTENT_ID,
+            phone_display=phone_display,
+            phone_href=phone_href,
+        )
+
+    reminder_minutes = (
+        [int(v) for v in REMINDER_MINUTES_BEFORE if int(v) > 0]
+        if REMINDER_MINUTES_BEFORE
+        else [48 * 60]
     )
-    reminder_minutes = [int(v) for v in REMINDER_MINUTES_BEFORE if int(v) > 0] if REMINDER_MINUTES_BEFORE else [48 * 60]
     reminder_min = reminder_minutes[0]
 
     return {
@@ -205,6 +386,7 @@ def _build_common_event_params(
         "start": start_dt,
         "end": end_dt,
         "location_display_name": loc_address,
+        "location_code": loc_code,
         "attendee_email": record.get("email") or record.get("Email") or "",
         "attendee_name": record.get("patient_name") or record.get("PatientName") or None,
         "body_content": body,
@@ -212,6 +394,7 @@ def _build_common_event_params(
         "reminder_minutes_before_start": reminder_min,
         "reminder_minutes_before_list": reminder_minutes,
         "display_when": display_when,
+        "preview_text": preview,
     }
 
 
@@ -268,6 +451,10 @@ def _send_ics_mail(
 
     subject_final = subject_override or params["subject"]
 
+    from config import ICS_CANCEL_CONTENT_ID, ICS_INVITE_CONTENT_ID
+
+    ics_cid = ICS_CANCEL_CONTENT_ID if method.upper() == "CANCEL" else ICS_INVITE_CONTENT_ID
+
     send_mail_with_ics(
         access_token,
         to_address=to_addr,
@@ -277,6 +464,7 @@ def _send_ics_mail(
         ics_bytes=ics_bytes,
         ics_filename=ics_filename,
         calendar_method=method.upper(),
+        ics_content_id=ics_cid,
     )
 
     if invite_log_record is not None and invite_log_key and invite_log_action:
@@ -345,7 +533,15 @@ def do_create(access_token: str, record: dict[str, Any], location_map: dict[str,
         invite_log_key=key,
         invite_log_action="create",
     )
-    set_invite_state(key, uid, seq)
+    dur_min = int((params["end"] - params["start"]).total_seconds() // 60)
+    set_invite_state(
+        key,
+        uid,
+        seq,
+        last_appt_date=str(record.get("appt_date") or ""),
+        last_appt_time=str(record.get("appt_time") or ""),
+        last_duration_minutes=dur_min,
+    )
     return True
 
 
@@ -368,7 +564,15 @@ def do_reschedule(access_token: str, record: dict[str, Any], location_map: dict[
         invite_log_key=key,
         invite_log_action="reschedule",
     )
-    set_invite_state(key, uid, seq)
+    dur_min = int((params["end"] - params["start"]).total_seconds() // 60)
+    set_invite_state(
+        key,
+        uid,
+        seq,
+        last_appt_date=str(record.get("appt_date") or ""),
+        last_appt_time=str(record.get("appt_time") or ""),
+        last_duration_minutes=dur_min,
+    )
     return True
 
 
@@ -402,9 +606,29 @@ def do_cancel(
             row_key,
         )
 
-    from config import CONFIRMATION_PHONE, LOCATION_MAP, WEBSITE_URL
+    from config import ICS_CANCEL_CONTENT_ID, LOCATION_MAP, phone_for_location_code
 
-    params = _build_common_event_params(record, LOCATION_MAP, action_kind="cancel")
+    merged = dict(record)
+    if state:
+        ld = state.get("last_appt_date")
+        lt = state.get("last_appt_time")
+        if ld and lt:
+            merged["appt_date"] = ld
+            merged["appt_time"] = lt
+        elif key:
+            slot = _slot_from_store_key(key)
+            if slot:
+                merged["appt_date"], merged["appt_time"] = slot
+    dur_ov = state.get("last_duration_minutes") if state else None
+    if not isinstance(dur_ov, int):
+        dur_ov = None
+
+    params = _build_common_event_params(
+        merged,
+        LOCATION_MAP,
+        action_kind="cancel",
+        duration_minutes_override=dur_ov,
+    )
     if not params["attendee_email"]:
         logger.warning("Cancel: no attendee email for key=%s; removing store only", key)
         remove_event(key)
@@ -412,11 +636,15 @@ def do_cancel(
 
     uid = state["ical_uid"]
     seq = state["sequence"] + 1
-    subj = f"Appointment cancelled - {params['display_when']}"
+    loc_code = (merged.get("location") or record.get("location") or "LIB").strip().upper()
+    phone_display, phone_href = phone_for_location_code(loc_code)
     html_body = _build_cancel_html(
+        record=merged,
         display_when=params["display_when"],
-        website_url=WEBSITE_URL.rstrip("/") + "/",
-        phone=CONFIRMATION_PHONE,
+        preview_text=params["preview_text"],
+        phone_display=phone_display,
+        phone_href=phone_href,
+        ics_cid=ICS_CANCEL_CONTENT_ID,
     )
 
     _send_ics_mail(
@@ -426,7 +654,6 @@ def do_cancel(
         sequence=seq,
         method="CANCEL",
         ics_filename="cancel.ics",
-        subject_override=subj,
         html_override=html_body,
         invite_log_record=record,
         invite_log_key=key,

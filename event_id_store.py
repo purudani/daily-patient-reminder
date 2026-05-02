@@ -77,7 +77,10 @@ def get_i_cal_uid(appointment_key: str) -> str | None:
 
 def get_invite_state(appointment_key: str) -> dict[str, Any] | None:
     """
-    Return { "ical_uid": str, "sequence": int } if we have a UID to update/cancel, else None.
+    Return invite metadata if we have a UID to update/cancel, else None.
+
+    Includes optional last_appt_date / last_appt_time / last_duration_minutes so a
+    cancellation uses the same DTSTART/DTEND as the last REQUEST (critical after reschedules).
 
     Prefers ical_uid; falls back to legacy i_cal_uid from Graph so a cancel after
     switching to ICS can still reference the old invite when that UID was stored.
@@ -95,17 +98,43 @@ def get_invite_state(appointment_key: str) -> dict[str, Any] | None:
         seq = int(seq.strip())
     elif not isinstance(seq, int):
         seq = 0
-    return {"ical_uid": uid, "sequence": seq}
+    out: dict[str, Any] = {"ical_uid": uid, "sequence": seq}
+    ld = record.get("last_appt_date")
+    lt = record.get("last_appt_time")
+    if ld and lt:
+        out["last_appt_date"] = str(ld).strip()
+        out["last_appt_time"] = str(lt).strip()
+    dur = record.get("last_duration_minutes")
+    if dur is not None:
+        try:
+            out["last_duration_minutes"] = int(dur)
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
-def set_invite_state(appointment_key: str, ical_uid: str, sequence: int) -> None:
+def set_invite_state(
+    appointment_key: str,
+    ical_uid: str,
+    sequence: int,
+    *,
+    last_appt_date: str | None = None,
+    last_appt_time: str | None = None,
+    last_duration_minutes: int | None = None,
+) -> None:
     """Persist UID and SEQUENCE after sending an ICS invite or update."""
     with _lock:
         data = _load_unsafe()
-        data[appointment_key] = {
+        rec: dict[str, Any] = {
             "ical_uid": ical_uid,
             "sequence": int(sequence),
         }
+        if last_appt_date and last_appt_time:
+            rec["last_appt_date"] = str(last_appt_date).strip()
+            rec["last_appt_time"] = str(last_appt_time).strip()
+        if last_duration_minutes is not None:
+            rec["last_duration_minutes"] = int(last_duration_minutes)
+        data[appointment_key] = rec
         _save_unsafe(data)
 
 

@@ -4,6 +4,8 @@ Configuration for the daily patient reminder automation.
 All paths are derived from a single project root so the repo can be moved to a
 new device without reconfiguring every file location.
 """
+from __future__ import annotations
+
 import os
 
 # --- Rooted folders ---
@@ -22,9 +24,8 @@ ACTUAL_REPORT_PATH = os.path.join(EXCEL_FOLDER, "actual.xlsx")
 MAILCHIMP_EXPORT_PATH = os.path.join(EXCEL_FOLDER, "processed_mailchimp_export.xlsx")
 
 # After a successful run_daily.py run, archive the processed Action/Actual input
-# files in Excel/ as action_YYYY-MM-DD.xlsx and actual_YYYY-MM-DD.xlsx.
+# files in Excel/ as YYYYMMDD_HHMMSS_action.xlsx (timestamp prefix for automation).
 ARCHIVE_PROCESSED_REPORTS = True
-PROCESSED_REPORT_DATE_FORMAT = "%Y-%m-%d"
 
 # Scheduler export tab names vary, so the readers always consume the first sheet.
 ACTION_SHEET_NAME = "Action"
@@ -113,13 +114,30 @@ MT30_DURATION_MINUTES = 30  # legacy; prefer APPOINTMENT_TYPE_DURATION_MINUTES
 ORGANIZER_NAME = "Liberty PT & Wellness"
 CALENDAR_TITLE = "Liberty PT & Wellness"
 WEBSITE_URL = "https://libertyptnj.com/"
-REMINDER_MINUTES_BEFORE = [48 * 60, 2 * 60]  # first value used for ICS VALARM
+REMINDER_MINUTES_BEFORE = [48 * 60, 2 * 60]  # both values emit ICS VALARM alerts
 # Graph accepts Windows names (e.g. "Eastern Standard Time") or IANA IDs.
 # IANA is often clearer for Google Calendar and other non-Outlook clients parsing the invite.
 TIMEZONE = os.environ.get("TIMEZONE", "America/New_York").strip() or "America/New_York"
 
 # --- Email (confirmation body + meeting invite HTML) ---
-CONFIRMATION_PHONE = "201-366-1115"
+# Display format and tel: href (E.164) per location code; LIB is default when unknown.
+LOCATION_PHONE_BY_CODE: dict[str, tuple[str, str]] = {
+    "LIB": ("201-366-1115", "+12013661115"),
+    "LIBN": ("201-366-1116", "+12013661116"),
+    "LIBJ": ("201-366-1120", "+12013661120"),
+}
+CONFIRMATION_PHONE = "201-366-1115"  # legacy default = LIB
+
+
+def phone_for_location_code(loc_code: str | None) -> tuple[str, str]:
+    """Return (display_phone, tel_href) for a location code."""
+    code = (loc_code or "LIB").strip().upper()
+    return LOCATION_PHONE_BY_CODE.get(code, LOCATION_PHONE_BY_CODE["LIB"])
+
+
+# Optional Content-ID for HTML 'cid:' links to the .ics attachment (client-dependent).
+ICS_INVITE_CONTENT_ID = "invite-calendar@libertyptnj.com"
+ICS_CANCEL_CONTENT_ID = "cancel-calendar@libertyptnj.com"
 # Optional: full URL to logo image for HTML body (if empty, a styled text header is used)
 EMAIL_LOGO_URL = os.environ.get("EMAIL_LOGO_URL", "").strip()
 # Inbox preview line (some clients show first line / hidden preheader)
