@@ -32,7 +32,13 @@ except ImportError:
     pass
 
 from calendar_actions import do_create
-from config import LOCATION_MAP, LOG_FOLDER, SKIP_NEXT_DAY, SKIP_SAME_DAY
+from config import (
+    LOCATION_MAP,
+    LOG_FOLDER,
+    SKIP_NEXT_DAY,
+    SKIP_PAST_APPOINTMENTS,
+    SKIP_SAME_DAY,
+)
 from event_id_store import get_invite_state
 from excel_reader import _is_uncpt, _normalize_pn, _parse_date, _parse_time
 from graph_auth import get_access_token
@@ -105,6 +111,15 @@ def _is_next_day_for(date_val: Any, ref_today: date) -> bool:
         return False
 
 
+def _is_before_today_for(date_val: Any, ref_today: date) -> bool:
+    if not date_val:
+        return False
+    try:
+        return pd.to_datetime(date_val).date() < ref_today
+    except Exception:
+        return False
+
+
 def _load_report(path_arg: str) -> pd.DataFrame:
     path = Path(path_arg).expanduser()
     if not path.exists():
@@ -159,6 +174,9 @@ def main() -> int:
             continue
         if not appt_date:
             out.append(_decision(idx, pn, patient_name, "skip", "missing appointment date", appt_time=appt_time, appt_type=appt_type, reference_today=ref_today_iso))
+            continue
+        if SKIP_PAST_APPOINTMENTS and _is_before_today_for(appt_date, ref_today):
+            out.append(_decision(idx, pn, patient_name, "skip", "past appointment date", appt_date=appt_date, appt_time=appt_time, appt_type=appt_type, email=email, reference_today=ref_today_iso))
             continue
         if SKIP_SAME_DAY and _is_same_day_for(appt_date, ref_today):
             out.append(_decision(idx, pn, patient_name, "skip", "same-day", appt_date=appt_date, appt_time=appt_time, appt_type=appt_type, email=email, reference_today=ref_today_iso))

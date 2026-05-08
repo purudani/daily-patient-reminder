@@ -81,6 +81,8 @@ def get_invite_state(appointment_key: str) -> dict[str, Any] | None:
 
     Includes optional last_appt_date / last_appt_time / last_duration_minutes so a
     cancellation uses the same DTSTART/DTEND as the last REQUEST (critical after reschedules).
+    Includes organizer_email when available so later updates/cancels keep the same
+    ICS organizer identity.
 
     Prefers ical_uid; falls back to legacy i_cal_uid from Graph so a cancel after
     switching to ICS can still reference the old invite when that UID was stored.
@@ -104,6 +106,9 @@ def get_invite_state(appointment_key: str) -> dict[str, Any] | None:
     if ld and lt:
         out["last_appt_date"] = str(ld).strip()
         out["last_appt_time"] = str(lt).strip()
+    org = record.get("organizer_email")
+    if org:
+        out["organizer_email"] = str(org).strip()
     dur = record.get("last_duration_minutes")
     if dur is not None:
         try:
@@ -121,6 +126,7 @@ def set_invite_state(
     last_appt_date: str | None = None,
     last_appt_time: str | None = None,
     last_duration_minutes: int | None = None,
+    organizer_email: str | None = None,
 ) -> None:
     """Persist UID and SEQUENCE after sending an ICS invite or update."""
     with _lock:
@@ -134,6 +140,8 @@ def set_invite_state(
             rec["last_appt_time"] = str(last_appt_time).strip()
         if last_duration_minutes is not None:
             rec["last_duration_minutes"] = int(last_duration_minutes)
+        if organizer_email:
+            rec["organizer_email"] = str(organizer_email).strip()
         data[appointment_key] = rec
         _save_unsafe(data)
 

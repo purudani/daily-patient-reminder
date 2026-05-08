@@ -28,7 +28,7 @@ The script creates **only the same three workbook types** you use in production:
 We **do not** generate extra “cancel follow-up” files. Those existed only as a shortcut for a second test run; real data is always **Action + Actual + Mailchimp** only.
 
 By default, all confirmation emails go **to** `ddmittalp@gmail.com` because `DEFAULT_RECIPIENT_EMAIL` is set in `config.py`. Set `DEFAULT_RECIPIENT_EMAIL=` in `.env` to test real Mailchimp recipients.
-They are sent **from** the mailbox in **`GRAPH_MAILBOX_USER`** (app-only) or the account you sign in with (delegated).
+They are sent **from** the mailbox in **`GRAPH_MAILBOX_USER`** (default `reminders@libertyptnj.com`) and use **`EMAIL_REPLY_TO`** (default `frontdesk@libertyptnj.com`) for patient replies.
 
 ### Invite audit log (Excel)
 
@@ -71,7 +71,7 @@ EVENT_ID_STORE_PATH=/full/path/to/daily-patient-reminder/dummy_event_id_store.js
 
 ## 3. Run 1 — minimal smoke (3 emails)
 
-1. Sign in as **deepak@libertyptnj.com** when the script prompts (device code or browser), or use app-only auth.
+1. Sign in as the mailbox configured in **`GRAPH_MAILBOX_USER`** when the script prompts (device code or browser), or use app-only auth.
 2. Run:
 
    ```bash

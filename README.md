@@ -85,7 +85,7 @@ This sends real patient emails and stores invite IDs in `event_id_store.json` fo
 
 2. **Applies rules**:
    - Skips first 2 rows of the action sheet.
-   - Skips same-day (and optionally next-day) appointments.
+   - Skips past, same-day, and optionally next-day appointments.
    - Skips rows with blank PN.
    - If multiple actions exist for the same appointment, groups them by appointment slot, sorts by **PN + appointment date + appointment time + Action Time**, and keeps the final action.
    - If the same appointment has exactly one **Create** and one **Delete** in the same run, skips both.
@@ -100,6 +100,7 @@ This sends real patient emails and stores invite IDs in `event_id_store.json` fo
    - **Create**: HTML + **`invite.ics`**; **stores ICS UID + SEQUENCE** in `event_id_store.json`.
    - **Reschedule**: same UID, higher SEQUENCE, updated **`invite.ics`** (clients that honor SEQUENCE merge the event).
    - **Cancel** / **Delete**: short HTML + **`cancel.ics`**; then remove the stored UID.
+   - Sends from `GRAPH_MAILBOX_USER` (default `reminders@libertyptnj.com`) and sets `Reply-To` to `EMAIL_REPLY_TO` (default `frontdesk@libertyptnj.com`).
 
 5. **Logging**: Writes a daily log file, optional **Excel audit** (`invite_sent_log.xlsx` / `INVITE_LOG_PATH`: one row per email sent), and (optionally) logs every invite/change to the daily log file.
 
@@ -120,9 +121,10 @@ This sends real patient emails and stores invite IDs in `event_id_store.json` fo
 | 7 | **GRAPH_CLIENT_ID** | Required. In `.env` (recommended). |
 | 8 | **App-only (no sign-in)** | `GRAPH_CLIENT_SECRET`, `GRAPH_TENANT_ID`, **`GRAPH_MAILBOX_USER`** (organizer email). Azure: Application permissions + admin consent. |
 | 9 | **Delegated (sign-in)** | Leave `GRAPH_CLIENT_SECRET` empty; optional `GRAPH_TENANT_ID`. First run: device code or browser; token may cache. |
-| 10 | **`GRAPH_MAILBOX_USER`** | Mailbox that sends mail (`/users/{email}/sendMail`); **required** with app-only. Optional with delegated if you rely on `/me` (see `graph_user.py`). |
+| 10 | **`GRAPH_MAILBOX_USER`** | Mailbox that sends mail (`/users/{email}/sendMail`); default `reminders@libertyptnj.com`; **required** with app-only. Optional with delegated if you rely on `/me` (see `graph_user.py`). |
 | 11 | **Test recipient override** | `DEFAULT_RECIPIENT_EMAIL` defaults to `ddmittalp@gmail.com`; set it empty to use Mailchimp emails. |
-| 12 | **Completion report** | `DAILY_REPORT_EMAIL` defaults to `deepak@libertyptnj.com`. |
+| 12 | **Reply-To** | `EMAIL_REPLY_TO` defaults to `frontdesk@libertyptnj.com`. |
+| 13 | **Completion report** | `DAILY_REPORT_EMAIL` defaults to `deepak@libertyptnj.com`. |
 
 No other env vars are required unless you override paths (then the corresponding `*_PATH` / `*_FOLDER` vars).
 
@@ -194,6 +196,8 @@ In **`config.py`** (or via environment variables):
 | Mailchimp export path | `MAILCHIMP_EXPORT_PATH` | `processed_mailchimp_export.xlsx` |
 | Mailchimp sheet | `MAILCHIMP_SHEET_NAME` | `0` (first sheet) |
 | Test recipient override | `DEFAULT_RECIPIENT_EMAIL` | `ddmittalp@gmail.com`; empty means use Mailchimp recipients |
+| Sender mailbox | `GRAPH_MAILBOX_USER` | `reminders@libertyptnj.com` |
+| Patient reply-to | `EMAIL_REPLY_TO` | `frontdesk@libertyptnj.com` |
 | Completion report recipient | `DAILY_REPORT_EMAIL` | `deepak@libertyptnj.com` |
 
 ### 2. Excel column names
@@ -246,12 +250,12 @@ Add or change codes here if your Excel uses different ones.
 
 ### 4. Microsoft Graph (Outlook mail)
 
-Mail uses **`POST /users/{GRAPH_MAILBOX_USER}/sendMail`** when **`GRAPH_MAILBOX_USER`** is set (e.g. `deepak@libertyptnj.com`). If it is empty **and** you use delegated auth, the app uses **`/me/sendMail`** and reads your address from **`GET /me`** (needs **User.Read**).
+Mail uses **`POST /users/{GRAPH_MAILBOX_USER}/sendMail`** when **`GRAPH_MAILBOX_USER`** is set (default `reminders@libertyptnj.com`). If it is empty **and** you use delegated auth, the app uses **`/me/sendMail`** and reads your address from **`GET /me`** (needs **User.Read**). Patient messages set **Reply-To** from `EMAIL_REPLY_TO` (default `frontdesk@libertyptnj.com`).
 
 **A) App-only (recommended for cron — no sign-in)**  
 - In Azure → App registration → **Certificates & secrets**: create a **client secret**.  
 - **API permissions** → **Application permissions**: **Mail.Send** → **Grant admin consent**. (**Calendars.\*** is *not* required — invites are `.ics` attachments.)  
-- In **`.env`**: `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_TENANT_ID`, **`GRAPH_MAILBOX_USER`** (the mailbox that sends the messages and appears as **ORGANIZER** in the `.ics` file).  
+- In **`.env`**: `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_TENANT_ID`, **`GRAPH_MAILBOX_USER`** (the mailbox that sends the messages and appears as **ORGANIZER** in the `.ics` file), and optionally `EMAIL_REPLY_TO`.  
 - Do **not** commit secrets to `config.py`; use `.env` only.
 
 **B) Delegated (device code / browser)**  
@@ -319,7 +323,7 @@ To test without affecting real patients, use the dummy data generator and send a
 
 - **`python scripts/create_dummy_data.py`** — default **minimal** smoke file (3 scenarios + optional cancel follow-up), or **`--full`** for the legacy large matrix
 - Pointing the app at dummy files (e.g. via `.env`) and optional **`invite_sent_log.xlsx`** audit rows
-- Signing in as **deepak@libertyptnj.com** and receiving invites at **purudani.2015@gmail.com**
+- Signing in with the configured `GRAPH_MAILBOX_USER` and receiving test invites at your override inbox
 - What to expect on first run vs second run (Cancel/Delete)
 
 ---
@@ -363,6 +367,7 @@ Appointment key = **PN + Date + Time** (normalized). Clients that honor iCalenda
 ## Optional config
 
 - **`SKIP_NEXT_DAY`**: set `True` to also skip tomorrow’s appointments.
+- **`SKIP_PAST_APPOINTMENTS`**: set `True` to skip appointments before the report/reference date.
 - **`LOG_INVITES_AND_CHANGES`**: set `True` in config to log every invite/change sent to the daily log file.
 - **`INVITE_LOG_PATH`**: Excel audit file (one row per email); set empty to disable.
 - **`REMINDER_MINUTES_BEFORE`**: first value is used for the calendar reminder (e.g. 48 hours); see limitations below.

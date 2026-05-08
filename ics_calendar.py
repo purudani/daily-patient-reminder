@@ -53,7 +53,7 @@ def _escape_ics_text(s: str) -> str:
 
 
 def _fold_line(line: str, max_len: int = 75) -> list[str]:
-    """Fold long content lines (octet-oriented; ASCII OK for our content)."""
+    """Fold long content lines at readable boundaries when possible."""
     if len(line) <= max_len:
         return [line]
     out: list[str] = []
@@ -61,13 +61,22 @@ def _fold_line(line: str, max_len: int = 75) -> list[str]:
     first = True
     while pos < len(line):
         chunk_len = max_len if first else max_len - 1  # continuation prefixed with space
-        chunk = line[pos : pos + chunk_len]
+        end = min(len(line), pos + chunk_len)
+        if end < len(line):
+            split_at = max(
+                line.rfind(";", pos + 1, end + 1),
+                line.rfind(",", pos + 1, end + 1),
+                line.rfind(" ", pos + 1, end + 1),
+            )
+            if split_at > pos:
+                end = split_at + 1
+        chunk = line[pos:end]
         if first:
             out.append(chunk)
             first = False
         else:
             out.append(" " + chunk)
-        pos += chunk_len
+        pos = end
     return out
 
 
@@ -110,6 +119,7 @@ def build_ics_calendar(
     If status is None and method is CANCEL, STATUS:CANCELLED is added.
     """
     method = method.upper()
+    now_utc = datetime.now(timezone.utc)
     lines: list[str] = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -119,7 +129,9 @@ def build_ics_calendar(
         "BEGIN:VEVENT",
         f"UID:{uid}",
         f"SEQUENCE:{sequence}",
-        f"DTSTAMP:{_format_utc(datetime.now(timezone.utc))}",
+        f"DTSTAMP:{_format_utc(now_utc)}",
+        f"CREATED:{_format_utc(now_utc)}",
+        f"LAST-MODIFIED:{_format_utc(now_utc)}",
         f"DTSTART:{_format_utc(dtstart_utc)}",
         f"DTEND:{_format_utc(dtend_utc)}",
         f"SUMMARY:{_escape_ics_text(summary)}",
@@ -131,9 +143,18 @@ def build_ics_calendar(
     org_cn = _cn_param_value(organizer_cn)
     att_cn = _cn_param_value(attendee_cn or attendee_email)
     lines.append(f"ORGANIZER;CN={org_cn}:mailto:{organizer_email}")
-    lines.append(f"ATTENDEE;CN={att_cn};RSVP=TRUE:mailto:{attendee_email}")
+    attendee_partstat = "ACCEPTED" if method == "CANCEL" else "NEEDS-ACTION"
+    attendee_rsvp = "FALSE" if method == "CANCEL" else "TRUE"
+    lines.append(
+        f"ATTENDEE;CN={att_cn};CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;"
+        f"PARTSTAT={attendee_partstat};RSVP={attendee_rsvp}:mailto:{attendee_email}"
+    )
     if method == "CANCEL" or (status and status.upper() == "CANCELLED"):
         lines.append("STATUS:CANCELLED")
+    else:
+        lines.append(f"STATUS:{(status or 'CONFIRMED').upper()}")
+    lines.append("TRANSP:OPAQUE")
+    lines.append("X-MICROSOFT-CDO-BUSYSTATUS:BUSY")
     if method == "REQUEST":
         alarm_values: list[int] = []
         if reminder_minutes_before_list:

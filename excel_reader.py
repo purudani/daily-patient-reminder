@@ -59,6 +59,7 @@ from config import (
     REFERENCE_DATE,
     SKIP_BLANK_PN,
     SKIP_FIRST_N_ROWS,
+    SKIP_PAST_APPOINTMENTS,
     SKIP_TRAILING_ACTION_TOTAL_ROW,
     SKIP_NEXT_DAY,
     SKIP_SAME_DAY,
@@ -357,6 +358,16 @@ def _is_next_day(date_val: Any) -> bool:
     try:
         dt = pd.to_datetime(date_val)
         return dt.date() == (_reference_today() + timedelta(days=1))
+    except Exception:
+        return False
+
+
+def _is_before_today(date_val: Any) -> bool:
+    if date_val is None:
+        return False
+    try:
+        dt = pd.to_datetime(date_val)
+        return dt.date() < _reference_today()
     except Exception:
         return False
 
@@ -799,6 +810,29 @@ def evaluate_daily_actions() -> dict[str, list[dict[str, Any]]]:
                     "UNCPT on actual/resolved record",
                     has_newer=has_newer,
                     used_actual=need_actual_lookup,
+                    appt_date=str(record.get("appt_date") or ""),
+                    appt_time=str(record.get("appt_time") or ""),
+                    appt_type=str(record.get("appt_type") or ""),
+                    email=str(record.get("email") or ""),
+                    patient_name=str(record.get("patient_name") or row_patient_name or ""),
+                )
+            )
+            continue
+        if SKIP_PAST_APPOINTMENTS and _is_before_today(record.get("appt_date")):
+            decisions.append(
+                _decision_row(
+                    idx,
+                    action_val,
+                    action,
+                    pn,
+                    "skip",
+                    "past appointment date (Actual appt date)" if need_actual_lookup else "past appointment date (resolved appt date)",
+                    has_newer=has_newer,
+                    used_actual=need_actual_lookup,
+                    appt_date=str(record.get("appt_date") or ""),
+                    appt_time=str(record.get("appt_time") or ""),
+                    appt_type=str(record.get("appt_type") or ""),
+                    email=str(record.get("email") or ""),
                     patient_name=str(record.get("patient_name") or row_patient_name or ""),
                 )
             )

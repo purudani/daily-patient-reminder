@@ -44,6 +44,7 @@ INVITE_LOG_PATH = os.path.join(LOG_FOLDER, "invite_sent_log.xlsx")
 
 # --- Excel options ---
 SKIP_FIRST_N_ROWS = 2
+SKIP_PAST_APPOINTMENTS = True
 SKIP_SAME_DAY = True
 SKIP_NEXT_DAY = True  # skip tomorrow's appts; reschedules moved from future -> next day are still allowed
 # Optional override for "today" in skip logic (YYYY-MM-DD).
@@ -120,6 +121,9 @@ REMINDER_MINUTES_BEFORE = [48 * 60, 2 * 60]  # both values emit ICS VALARM alert
 TIMEZONE = os.environ.get("TIMEZONE", "America/New_York").strip() or "America/New_York"
 
 # --- Email (confirmation body + meeting invite HTML) ---
+# Mailbox replies from patient emails should go here. The sender is still the
+# Graph mailbox below.
+EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO", "frontdesk@libertyptnj.com").strip()
 # Display format and tel: href (E.164) per location code; LIB is default when unknown.
 LOCATION_PHONE_BY_CODE: dict[str, tuple[str, str]] = {
     "LIB": ("201-366-1115", "+12013661115"),
@@ -135,9 +139,6 @@ def phone_for_location_code(loc_code: str | None) -> tuple[str, str]:
     return LOCATION_PHONE_BY_CODE.get(code, LOCATION_PHONE_BY_CODE["LIB"])
 
 
-# Optional Content-ID for HTML 'cid:' links to the .ics attachment (client-dependent).
-ICS_INVITE_CONTENT_ID = "invite-calendar@libertyptnj.com"
-ICS_CANCEL_CONTENT_ID = "cancel-calendar@libertyptnj.com"
 # Optional: full URL to logo image for HTML body (if empty, a styled text header is used)
 EMAIL_LOGO_URL = os.environ.get("EMAIL_LOGO_URL", "").strip()
 # Inbox preview line (some clients show first line / hidden preheader)
@@ -167,7 +168,7 @@ OUTLOOK_CALENDAR_WEB_BASE = os.environ.get(
 # Put real values in .env only — never commit secrets to the repo.
 #
 # App-only (no sign-in): set GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, GRAPH_TENANT_ID,
-# and GRAPH_MAILBOX_USER (organizer mailbox UPN, e.g. deepak@libertyptnj.com).
+# and GRAPH_MAILBOX_USER (organizer mailbox UPN, e.g. reminders@libertyptnj.com).
 # Azure app needs Application permission: Mail.Send (+ admin consent). Patient invites are email + .ics.
 #
 # Delegated (device code / interactive): leave GRAPH_CLIENT_SECRET empty; set GRAPH_CLIENT_ID
@@ -176,8 +177,10 @@ OUTLOOK_CALENDAR_WEB_BASE = os.environ.get(
 GRAPH_TENANT_ID = os.environ.get("GRAPH_TENANT_ID", "")
 GRAPH_CLIENT_ID = os.environ.get("GRAPH_CLIENT_ID", "")
 GRAPH_CLIENT_SECRET = os.environ.get("GRAPH_CLIENT_SECRET", "")
-# Organizer / shared mailbox that owns the calendar and sends invites (required for app-only)
-GRAPH_MAILBOX_USER = os.environ.get("GRAPH_MAILBOX_USER", "")
+# Organizer / shared mailbox that sends patient emails and appears as ORGANIZER
+# in the .ics file. Set GRAPH_MAILBOX_USER= in .env only if you intentionally
+# want delegated /me mode instead of this mailbox.
+GRAPH_MAILBOX_USER = os.environ.get("GRAPH_MAILBOX_USER", "reminders@libertyptnj.com").strip()
 
 # User.Read: only needed for delegated mode when GRAPH_MAILBOX_USER is unset (GET /me for organizer email).
 GRAPH_SCOPES = [

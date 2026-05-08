@@ -46,6 +46,10 @@ START
     |   +-- If build fails -> SKIP
     |   +-- Else continue
     |
+    +-- Is resolved appointment date before reference/report date?
+    |   +-- Yes and SKIP_PAST_APPOINTMENTS=True -> SKIP
+    |   +-- No -> continue
+    |
     +-- Is resolved Type = UNCPT?
     |   +-- Yes -> SKIP
     |   +-- No -> continue
@@ -102,6 +106,7 @@ Find Actual row for current Action row
 |
 +-- Apply Actual-based skip checks
 |   +-- Actual Type = UNCPT -> SKIP
+|   +-- Actual appt date is before reference/report date and SKIP_PAST_APPOINTMENTS=True -> SKIP
 |   +-- Actual appt date is same-day and SKIP_SAME_DAY=True -> SKIP
 |   +-- Actual appt date is next-day and SKIP_NEXT_DAY=True -> SKIP
 |
@@ -187,6 +192,7 @@ SKIP when:
 - has_newer path cannot find a usable Actual match
 - record build fails
 - resolved appt_type = UNCPT
+- resolved appointment date is before reference/report date and SKIP_PAST_APPOINTMENTS=True
 - has_newer path resolved appointment date is same-day / next-day per flags
 - email is missing after Mailchimp lookup and DEFAULT_RECIPIENT_EMAIL is blank
 - exception: allow a `reschedule` when the original Action appointment date is beyond next day and the resolved appointment is moved into next day

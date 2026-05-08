@@ -1,5 +1,5 @@
 """
-Send email via Microsoft Graph with an text/calendar (.ics) attachment.
+Send email via Microsoft Graph with a text/calendar (.ics) attachment.
 
 Uses /users/{GRAPH_MAILBOX_USER}/sendMail when GRAPH_MAILBOX_USER is set, else /me/sendMail.
 """
@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import requests
 
-from config import GRAPH_MAILBOX_USER
+from config import EMAIL_REPLY_TO, GRAPH_MAILBOX_USER
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,25 @@ def _headers(access_token: str) -> dict[str, str]:
     }
 
 
+def _email_recipient(address: str, name: str | None = None) -> dict[str, Any]:
+    return {
+        "emailAddress": {
+            "address": address.strip(),
+            "name": (name or address).strip(),
+        }
+    }
+
+
+def _configured_reply_to(
+    reply_to_address: str | None,
+    reply_to_name: str | None = None,
+) -> list[dict[str, Any]]:
+    address = (reply_to_address if reply_to_address is not None else EMAIL_REPLY_TO).strip()
+    if not address:
+        return []
+    return [_email_recipient(address, reply_to_name or address)]
+
+
 def send_mail_with_ics(
     access_token: str,
     *,
@@ -45,6 +64,8 @@ def send_mail_with_ics(
     calendar_method: str = "REQUEST",
     save_to_sent_items: bool = True,
     ics_content_id: str | None = None,
+    reply_to_address: str | None = None,
+    reply_to_name: str | None = None,
 ) -> None:
     """
     Send one message with HTML body and a calendar attachment.
@@ -56,7 +77,7 @@ def send_mail_with_ics(
         raise ValueError("to_address is required")
 
     method_upper = calendar_method.upper()
-    content_type = f"text/calendar; charset=UTF-8; method={method_upper}"
+    content_type = f"text/calendar; method={method_upper}; charset=UTF-8"
 
     attachment: dict[str, Any] = {
         "@odata.type": "#microsoft.graph.fileAttachment",
@@ -69,12 +90,7 @@ def send_mail_with_ics(
     if cid:
         attachment["contentId"] = cid
 
-    recipient: dict[str, Any] = {
-        "emailAddress": {
-            "address": to_address,
-            "name": (to_name or to_address).strip(),
-        }
-    }
+    recipient = _email_recipient(to_address, to_name or to_address)
 
     message: dict[str, Any] = {
         "subject": subject,
@@ -85,6 +101,9 @@ def send_mail_with_ics(
         "toRecipients": [recipient],
         "attachments": [attachment],
     }
+    reply_to = _configured_reply_to(reply_to_address, reply_to_name)
+    if reply_to:
+        message["replyTo"] = reply_to
 
     payload = {
         "message": message,
@@ -110,28 +129,30 @@ def send_html_email(
     subject: str,
     html_body: str,
     save_to_sent_items: bool = True,
+    reply_to_address: str | None = None,
+    reply_to_name: str | None = None,
 ) -> None:
     """Send one plain HTML message via Microsoft Graph."""
     to_address = to_address.strip()
     if not to_address:
         raise ValueError("to_address is required")
 
-    recipient: dict[str, Any] = {
-        "emailAddress": {
-            "address": to_address,
-            "name": (to_name or to_address).strip(),
-        }
+    recipient = _email_recipient(to_address, to_name or to_address)
+
+    message: dict[str, Any] = {
+        "subject": subject,
+        "body": {
+            "contentType": "HTML",
+            "content": html_body,
+        },
+        "toRecipients": [recipient],
     }
+    reply_to = _configured_reply_to(reply_to_address, reply_to_name)
+    if reply_to:
+        message["replyTo"] = reply_to
 
     payload = {
-        "message": {
-            "subject": subject,
-            "body": {
-                "contentType": "HTML",
-                "content": html_body,
-            },
-            "toRecipients": [recipient],
-        },
+        "message": message,
         "saveToSentItems": save_to_sent_items,
     }
 
