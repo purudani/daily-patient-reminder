@@ -151,12 +151,12 @@ EMAIL_PREVIEW_TEXT = os.environ.get(
 # only to this address, even if Mailchimp has a different email or no email.
 # Set DEFAULT_RECIPIENT_EMAIL= in .env to send to actual Mailchimp recipients.
 DEFAULT_RECIPIENT_EMAIL = os.environ.get(
-    "DEFAULT_RECIPIENT_EMAIL", "ddmittalp@gmail.com"
+    "DEFAULT_RECIPIENT_EMAIL", "purudani.2015@gmail.com"
 ).strip()
 
 # End-of-run success/failure report recipient. Set DAILY_REPORT_EMAIL= to disable.
 DAILY_REPORT_EMAIL = os.environ.get(
-    "DAILY_REPORT_EMAIL", "deepak@libertyptnj.com"
+    "DAILY_REPORT_EMAIL", "purudani.2015@gmail.com"
 ).strip()
 
 # Outlook on the web “Add to calendar” link base (M365 default). Use https://outlook.live.com for Outlook.com.

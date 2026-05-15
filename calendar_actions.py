@@ -280,11 +280,19 @@ def _slot_from_store_key(key: str) -> tuple[str, str] | None:
     return None
 
 
-def _appointment_key(record: dict[str, Any]) -> str:
-    """Stable key for ICS UID store: PN + date + time (reschedule uses original_* from Action row)."""
+def _appointment_key(record: dict[str, Any], *, prefer_original: bool = False) -> str:
+    """Stable key for ICS UID store: PN + date + time."""
     pn = record.get("pn") or record.get("PN") or record.get("PatientNumber") or ""
-    date_part = record.get("original_appt_date") or record.get("appt_date") or record.get("ApptDate") or record.get("Date") or ""
-    time_part = record.get("original_appt_time") or record.get("appt_time") or record.get("ApptTime") or record.get("Time") or ""
+    current_date = record.get("appt_date") or record.get("ApptDate") or record.get("Date") or ""
+    current_time = record.get("appt_time") or record.get("ApptTime") or record.get("Time") or ""
+    original_date = record.get("original_appt_date") or ""
+    original_time = record.get("original_appt_time") or ""
+    if prefer_original:
+        date_part = original_date or current_date
+        time_part = original_time or current_time
+    else:
+        date_part = current_date or original_date
+        time_part = current_time or original_time
     return f"{pn}_{date_part}_{time_part}".replace(" ", "_")
 
 
@@ -527,7 +535,7 @@ def do_create(access_token: str, record: dict[str, Any], location_map: dict[str,
 
 
 def do_reschedule(access_token: str, record: dict[str, Any], location_map: dict[str, str]) -> bool:
-    key = _appointment_key(record)
+    key = _appointment_key(record, prefer_original=True)
     params = _build_common_event_params(record, location_map, action_kind="reschedule")
     if not params["attendee_email"]:
         logger.warning("Skipping reschedule: no attendee email for record %s", record)
@@ -579,8 +587,9 @@ def do_cancel(
         same_pn_keys = [k for k in get_all_keys() if pn and str(k).startswith(f"{pn}_")]
         logger.warning(
             "Cancel: no stored invite UID for row key=%s. Keys in store for PN=%s: %s. "
-            "After a reschedule, the store uses the **original** Date/Time; put that on the cancel "
-            "row, or keep only one open visit per PN. See event_id_store.json.",
+            "For rescheduled invites, cancel lookup also checks stored last_appt_date/last_appt_time. "
+            "If no stored slot matches the cancel row Date/Time, the cancel is skipped to avoid "
+            "cancelling the wrong appointment. See event_id_store.json.",
             row_key,
             pn or "?",
             same_pn_keys if same_pn_keys else "none",
@@ -641,7 +650,7 @@ def do_cancel(
         method="CANCEL",
         ics_filename="cancel.ics",
         html_override=html_body,
-        invite_log_record=record,
+        invite_log_record=merged,
         invite_log_key=key,
         invite_log_action=log_action,
         organizer_email_override=state.get("organizer_email") if state else None,

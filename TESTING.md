@@ -96,7 +96,7 @@ If you put **CREATE** and **DELETE** for the **same** visit (same PN + Date + Ti
 **Cancel row in the Action report** — use **`CANCEL w. remove`** or **`DELETE`** in the **Action** column (same style as your scheduler export). The job maps both to a cancel email + **`cancel.ics`**.
 
 **Why cancel sometimes didn’t send (key mismatch)**  
-The app looks up the prior invite in **`event_id_store.json`** using **`PN + Date + Time`**. After a **reschedule**, the store stays keyed by the **original** appointment slot (e.g. **12:00**), not the new time (**10:00**). If your cancel row shows the **new** time only, the keys won’t match. **Fix:** either put the **original** Date/Time on the cancel row, or rely on the **single-visit fallback** (if there is only **one** stored visit for that PN, the app now resolves it automatically — see `resolve_store_key_for_cancel` in `event_id_store.py`). If a patient has **two** upcoming visits, you must match the correct **Date/Time** to the line in **`event_id_store.json`**.
+The app looks up the prior invite in **`event_id_store.json`** using **`PN + Date + Time`** for the appointment being cancelled. After a **reschedule**, the store may still be keyed by the **original** appointment slot, so cancel lookup also checks the stored **`last_appt_date`** and **`last_appt_time`**. If no stored slot matches the cancel row Date/Time, the app skips the cancel instead of risking the wrong visit.
 
 **Where to see “cancel” in data**  
 - **Action** sheet: the row whose **Action** column is cancel/delete.  
