@@ -152,11 +152,8 @@ def _build_confirmation_html(
     safe_phone_d = html.escape(phone_display)
     safe_fn = html.escape(ics_filename)
     calendar_instruction = (
-        "use your email/calendar app&rsquo;s calendar prompt, or open the attached "
-        f"<strong>{safe_fn}</strong> file to update this appointment."
-        if action_kind == "reschedule"
-        else "use your email/calendar app&rsquo;s calendar prompt, or open the attached "
-        f"<strong>{safe_fn}</strong> file to add this appointment."
+        "Please update your calendar using attached "
+        f"<strong>{safe_fn}</strong> file."
     )
 
     return f"""<!DOCTYPE html>
@@ -194,7 +191,7 @@ def _build_confirmation_html(
               </td>
             </tr>
           </table>
-          <p style="margin:16px 0 20px 0;font-size:16px;color:#444;">To keep your calendar current, {calendar_instruction}</p>
+          <p style="margin:16px 0 20px 0;font-size:18px;color:#Ff0000;">{calendar_instruction}</p>
           <p style="margin:0 0 20px 0;">If you can&rsquo;t make it, please let us know <strong>at least 48 hours in advance</strong> so we can offer that time to another patient on our waiting list. You can reply to this email or call us at <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>.</p>
         </td>
       </tr>
@@ -250,7 +247,7 @@ def _build_cancel_html(
         <td class="lpw-body" style="padding:28px 24px;color:#222222;font-size:18px;line-height:1.65;">
           <p style="margin:0 0 16px 0;">Dear {fn},</p>
           <p style="margin:0 0 16px 0;">Your appointment at <strong>Liberty PT &amp; Wellness</strong> scheduled for <strong>{html.escape(display_when)}</strong> has been <strong>cancelled</strong>.</p>
-          <p style="margin:0 0 16px 0;">We attached <strong>cancel.ics</strong> so your calendar can remove this event if it was already added.</p>
+          <p style="margin:0 0 16px 0;color:#Ff0000;">Please update your calendar using attached <strong>cancel.ics</strong> file.</p>
           <p style="margin:0;">If you have questions, reply to this email or call <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>.</p>
         </td>
       </tr>
