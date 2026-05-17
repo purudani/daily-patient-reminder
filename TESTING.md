@@ -96,7 +96,7 @@ If you put **CREATE** and **DELETE** for the **same** visit (same PN + Date + Ti
 **Cancel row in the Action report** — use **`CANCEL w. remove`** or **`DELETE`** in the **Action** column (same style as your scheduler export). The job maps both to a cancel email + **`cancel.ics`**.
 
 **Why cancel sometimes didn’t send (key mismatch)**  
-The app looks up the prior invite in **`event_id_store.json`** using **`PN + Date + Time`** for the appointment being cancelled. After a **reschedule**, the store may still be keyed by the **original** appointment slot, so cancel lookup also checks the stored **`last_appt_date`** and **`last_appt_time`**. If no stored slot matches the cancel row Date/Time, the app skips the cancel instead of risking the wrong visit.
+The app looks up the prior invite in **`event_id_store.json`** using **`PN + Date + Time`** for the appointment being cancelled. After a **reschedule**, the store may still be keyed by the **original** appointment slot, so cancel lookup also checks the stored **`last_appt_date`** and **`last_appt_time`**. If no stored slot matches the cancel row Date/Time, the app treats the row as a separate cancellation and sends **`cancel.ics`** for the row's own Date/Time instead of assuming another appointment for the same PN is the one being cancelled.
 
 **Where to see “cancel” in data**  
 - **Action** sheet: the row whose **Action** column is cancel/delete.  

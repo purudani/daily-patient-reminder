@@ -190,26 +190,50 @@ def get_all_keys() -> list[str]:
     return list(data.keys())
 
 
+def _slot_from_key(appointment_key: str) -> tuple[str, str] | None:
+    parts = str(appointment_key or "").rsplit("_", 2)
+    if len(parts) != 3:
+        return None
+    _pn, appt_date, appt_time = parts
+    if not appt_date or not appt_time:
+        return None
+    return appt_date.strip(), appt_time.strip()
+
+
 def resolve_store_key_for_cancel(pn: str, primary_key: str) -> str | None:
     """
     Resolve which store key to use for cancel/delete.
 
     1. If ``primary_key`` (from Action Date/Time) exists in the store, use it.
-    2. Else, if exactly **one** key exists for this PN, use it (common when the Action row
-       shows the *new* time after a reschedule but the store is still keyed by the *original* slot).
+    2. Else, use a stored key for this PN only when its last sent appointment
+       date/time exactly matches the cancel/delete row's date/time.
 
-    If multiple keys exist for the same PN, returns None (ambiguous — align Date/Time on the
-    cancel row with the key in ``event_id_store.json``, or cancel one visit per run).
+    Returns None when there is no exact appointment match, so the caller can treat
+    the row as a separate cancellation instead of assuming another appointment for
+    the same PN is the one being cancelled.
     """
     pn_s = str(pn or "").strip()
     if get_invite_state(primary_key):
         return primary_key
-    if not pn_s:
+    row_slot = _slot_from_key(primary_key)
+    if not pn_s or row_slot is None:
         return None
     prefix = f"{pn_s}_"
     with _lock:
         data = _load_unsafe()
-    matches = [k for k in data.keys() if str(k).startswith(prefix)]
+    matches = []
+    for key, record in data.items():
+        if not str(key).startswith(prefix) or not isinstance(record, dict):
+            continue
+        uid = (record.get("ical_uid") or record.get("i_cal_uid") or "").strip()
+        if not uid:
+            continue
+        stored_slot = (
+            str(record.get("last_appt_date") or "").strip(),
+            str(record.get("last_appt_time") or "").strip(),
+        )
+        if stored_slot == row_slot:
+            matches.append(str(key))
     if len(matches) == 1:
         return matches[0]
     return None
