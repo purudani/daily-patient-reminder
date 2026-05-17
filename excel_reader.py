@@ -752,19 +752,27 @@ def evaluate_daily_actions() -> dict[str, list[dict[str, Any]]]:
         if need_actual_lookup:
             actual_row = _find_actual_row_for_has_newer(actual_df, pn, row, cols)
             if actual_row is None:
-                decisions.append(
-                    _decision_row(
-                        idx,
-                        action_val,
+                if action in (*ACTIONS_RESCHEDULE, *ACTIONS_CANCEL, *ACTIONS_DELETE):
+                    logger.warning(
+                        "Has newer fallback: no usable Actual row for %s PN=%s; using Action row so the email can still send.",
                         action,
                         pn,
-                        "skip",
-                        "has_newer: no usable Actual row after PN + Action Date/Time match and appointment date/time narrowing",
-                        has_newer=has_newer,
-                        patient_name=row_patient_name,
                     )
-                )
-                continue
+                    need_actual_lookup = False
+                else:
+                    decisions.append(
+                        _decision_row(
+                            idx,
+                            action_val,
+                            action,
+                            pn,
+                            "skip",
+                            "has_newer: no usable Actual row after PN + Action Date/Time match and appointment date/time narrowing",
+                            has_newer=has_newer,
+                            patient_name=row_patient_name,
+                        )
+                    )
+                    continue
 
         use_reschedule_cols = action in ACTIONS_RESCHEDULE and not need_actual_lookup
 

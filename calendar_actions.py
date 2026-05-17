@@ -581,21 +581,22 @@ def do_cancel(
     _ = comment
     row_key = _appointment_key(record)
     pn = str(record.get("pn") or record.get("PN") or "").strip()
-    key = resolve_store_key_for_cancel(pn, row_key)
-    state = get_invite_state(key) if key else None
-    if not key or not state:
+    store_key = resolve_store_key_for_cancel(pn, row_key)
+    state = get_invite_state(store_key) if store_key else None
+    key = store_key or row_key
+    if not state:
         same_pn_keys = [k for k in get_all_keys() if pn and str(k).startswith(f"{pn}_")]
         logger.warning(
             "Cancel: no stored invite UID for row key=%s. Keys in store for PN=%s: %s. "
             "For rescheduled invites, cancel lookup also checks stored last_appt_date/last_appt_time. "
-            "If no stored slot matches the cancel row Date/Time, the cancel is skipped to avoid "
-            "cancelling the wrong appointment. See event_id_store.json.",
+            "Sending cancellation email with a fallback UID based on key=%s.",
             row_key,
             pn or "?",
             same_pn_keys if same_pn_keys else "none",
+            key,
         )
-        return False
-    if key != row_key:
+        state = {"ical_uid": stable_ical_uid(key), "sequence": 0}
+    if store_key and key != row_key:
         logger.info(
             "Cancel: using store key=%s (Action row keyed as %s — e.g. current vs original slot)",
             key,

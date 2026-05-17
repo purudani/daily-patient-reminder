@@ -325,7 +325,7 @@ def main() -> int:
                                 logger.info("Cancel/Delete sent: PN=%s", pn)
                         elif LOG_INVITES_AND_CHANGES:
                             logger.info(
-                                "Cancel/Delete skipped: PN=%s (no stored invite UID; nothing to cancel)",
+                                "Cancel/Delete not sent: PN=%s (see prior warning for details)",
                                 pn,
                             )
                     else:
