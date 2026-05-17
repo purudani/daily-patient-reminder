@@ -136,7 +136,10 @@ CONFIRMATION_PHONE = "201-366-1115"  # legacy default = LIB
 def phone_for_location_code(loc_code: str | None) -> tuple[str, str]:
     """Return (display_phone, tel_href) for a location code."""
     code = (loc_code or "LIB").strip().upper()
-    return LOCATION_PHONE_BY_CODE.get(code, LOCATION_PHONE_BY_CODE["LIB"])
+    display_phone, dial_phone = LOCATION_PHONE_BY_CODE.get(code, LOCATION_PHONE_BY_CODE["LIB"])
+    dial_phone = dial_phone.strip()
+    tel_href = dial_phone if dial_phone.lower().startswith("tel:") else f"tel:{dial_phone}"
+    return display_phone, tel_href
 
 
 # Optional: full URL to logo image for HTML body (if empty, a styled text header is used)
