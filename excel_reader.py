@@ -259,6 +259,26 @@ def _parse_time_optional(val: Any) -> str | None:
     return _parse_time(val)
 
 
+def _reschedule_unchanged(
+    original_date: str | None,
+    original_time: Any,
+    new_date: str | None,
+    new_time: Any,
+) -> bool:
+    """True when the resolved reschedule slot matches the original Action row date/time."""
+    od = _parse_date(original_date)
+    nd = _parse_date(new_date)
+    if not od or not nd:
+        return False
+    if od != nd:
+        return False
+    ot = _parse_time_optional(original_time)
+    nt = _parse_time_optional(new_time)
+    if not ot or not nt:
+        return False
+    return ot == nt
+
+
 def _normalize_pn(val: Any) -> str:
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return ""
@@ -880,6 +900,30 @@ def evaluate_daily_actions() -> dict[str, list[dict[str, Any]]]:
         if action in ACTIONS_RESCHEDULE:
             record["original_appt_date"] = original_appt_date
             record["original_appt_time"] = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
+            if _reschedule_unchanged(
+                original_appt_date,
+                record["original_appt_time"],
+                record.get("appt_date"),
+                record.get("appt_time"),
+            ):
+                decisions.append(
+                    _decision_row(
+                        idx,
+                        action_val,
+                        action,
+                        pn,
+                        "skip",
+                        "reschedule: new date/time same as original",
+                        has_newer=has_newer,
+                        used_actual=need_actual_lookup,
+                        appt_date=str(record.get("appt_date") or ""),
+                        appt_time=str(record.get("appt_time") or ""),
+                        appt_type=str(record.get("appt_type") or ""),
+                        email=str(record.get("email") or ""),
+                        patient_name=str(record.get("patient_name") or row_patient_name or ""),
+                    )
+                )
+                continue
         elif need_actual_lookup and action in (*ACTIONS_CANCEL, *ACTIONS_DELETE):
             record["original_appt_date"] = original_appt_date
             record["original_appt_time"] = _parse_time(_cell_value(row, COL_APPT_TIME, cols))
