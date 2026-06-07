@@ -2,6 +2,7 @@
 Build iCalendar (.ics) payloads for email attachments.
 
 Uses METHOD:REQUEST for new/updated appointments and METHOD:CANCEL for removals.
+New/update requests default to no RSVP so patients are not prompted to accept/decline.
 Stable UID + incrementing SEQUENCE lets clients update the same calendar entry.
 """
 from __future__ import annotations
@@ -113,10 +114,12 @@ def build_ics_calendar(
     reminder_minutes_before: int = 48 * 60,
     reminder_minutes_before_list: list[int] | None = None,
     status: str | None = None,
+    request_rsvp: bool = False,
 ) -> bytes:
     """
     Full VCALENDAR with one VEVENT. method is REQUEST or CANCEL.
     If status is None and method is CANCEL, STATUS:CANCELLED is added.
+    request_rsvp controls whether REQUEST invites ask attendees to respond.
     """
     method = method.upper()
     now_utc = datetime.now(timezone.utc)
@@ -143,8 +146,8 @@ def build_ics_calendar(
     org_cn = _cn_param_value(organizer_cn)
     att_cn = _cn_param_value(attendee_cn or attendee_email)
     lines.append(f"ORGANIZER;CN={org_cn}:mailto:{organizer_email}")
-    attendee_partstat = "ACCEPTED" if method == "CANCEL" else "NEEDS-ACTION"
-    attendee_rsvp = "FALSE" if method == "CANCEL" else "TRUE"
+    attendee_partstat = "NEEDS-ACTION" if method == "REQUEST" and request_rsvp else "ACCEPTED"
+    attendee_rsvp = "TRUE" if method == "REQUEST" and request_rsvp else "FALSE"
     lines.append(
         f"ATTENDEE;CN={att_cn};CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;"
         f"PARTSTAT={attendee_partstat};RSVP={attendee_rsvp}:mailto:{attendee_email}"

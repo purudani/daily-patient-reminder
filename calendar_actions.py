@@ -175,7 +175,7 @@ def _build_confirmation_html(
   <tr><td align="center" style="padding:20px 12px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(26,77,110,0.08);">
       <tr>
-        <td style="background:linear-gradient(135deg,#1a4d6e 0%,#2d6a8f 100%);padding:28px 24px;text-align:center;color:#ffffff;">
+        <td bgcolor="#1a4d6e" style="background-color:#1a4d6e;background:#1a4d6e;padding:28px 24px;text-align:center;color:#ffffff;">
           {logo_block}
         </td>
       </tr>
@@ -192,7 +192,7 @@ def _build_confirmation_html(
             </tr>
           </table>
           <p style="margin:16px 0 20px 0;font-size:18px;color:#Ff0000;">{calendar_instruction}</p>
-          <p style="margin:0 0 20px 0;">If you can&rsquo;t make it, please let us know <strong>at least 48 hours in advance</strong> so we can offer that time to another patient on our waiting list. You can reply to this email or call us at <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>.</p>
+          <p style="margin:0 0 20px 0;">To cancel or update this appointment, please call our front desk at <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>. Please do not use the calendar RSVP buttons to decline or cancel your appointment. If you can&rsquo;t make it, please let us know <strong>at least 48 hours in advance</strong> so we can offer that time to another patient on our waiting list.</p>
         </td>
       </tr>
       <tr>
@@ -239,7 +239,7 @@ def _build_cancel_html(
   <tr><td align="center" style="padding:20px 12px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(26,77,110,0.08);">
       <tr>
-        <td style="background:linear-gradient(135deg,#1a4d6e 0%,#2d6a8f 100%);padding:28px 24px;text-align:center;color:#ffffff;">
+        <td bgcolor="#1a4d6e" style="background-color:#1a4d6e;background:#1a4d6e;padding:28px 24px;text-align:center;color:#ffffff;">
           <div style="font-size:22px;font-weight:700;">Liberty PT &amp; Wellness</div>
         </td>
       </tr>
@@ -444,6 +444,7 @@ def _send_ics_mail(
         reminder_minutes_before=params.get("reminder_minutes_before_start", 48 * 60),
         reminder_minutes_before_list=params.get("reminder_minutes_before_list"),
         status="CANCELLED" if method.upper() == "CANCEL" else None,
+        request_rsvp=False,
     )
 
     subject_final = subject_override or params["subject"]
