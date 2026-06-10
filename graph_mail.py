@@ -61,7 +61,7 @@ def send_mail_with_ics(
     html_body: str,
     ics_bytes: bytes,
     ics_filename: str = "invite.ics",
-    calendar_method: str = "REQUEST",
+    calendar_method: str = "PUBLISH",
     save_to_sent_items: bool = True,
     ics_content_id: str | None = None,
     reply_to_address: str | None = None,
@@ -70,7 +70,7 @@ def send_mail_with_ics(
     """
     Send one message with HTML body and a calendar attachment.
 
-    calendar_method should be REQUEST (invite/update) or CANCEL.
+    calendar_method should be PUBLISH (appointment item), REQUEST, or CANCEL.
     """
     to_address = to_address.strip()
     if not to_address:

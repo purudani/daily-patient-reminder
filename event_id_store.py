@@ -80,7 +80,7 @@ def get_invite_state(appointment_key: str) -> dict[str, Any] | None:
     Return invite metadata if we have a UID to update/cancel, else None.
 
     Includes optional last_appt_date / last_appt_time / last_duration_minutes so a
-    cancellation uses the same DTSTART/DTEND as the last REQUEST (critical after reschedules).
+    cancellation uses the same DTSTART/DTEND as the last invite (critical after reschedules).
     Includes organizer_email when available so later updates/cancels keep the same
     ICS organizer identity.
 

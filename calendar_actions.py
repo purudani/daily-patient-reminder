@@ -192,7 +192,7 @@ def _build_confirmation_html(
             </tr>
           </table>
           <p style="margin:16px 0 20px 0;font-size:18px;color:#Ff0000;">{calendar_instruction}</p>
-          <p style="margin:0 0 20px 0;">To cancel or update this appointment, please call our front desk at <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>. Please do not use the calendar RSVP buttons to decline or cancel your appointment. If you can&rsquo;t make it, please let us know <strong>at least 48 hours in advance</strong> so we can offer that time to another patient on our waiting list.</p>
+          <p style="margin:0 0 20px 0;">To cancel or update this appointment, please call our front desk at <a href="{html.escape(phone_href, quote=True)}" style="color:#1a4d6e;font-weight:600;">{safe_phone_d}</a>. If you can&rsquo;t make it, please let us know <strong>at least 48 hours in advance</strong> so we can offer that time to another patient on our waiting list.</p>
         </td>
       </tr>
       <tr>
@@ -515,7 +515,7 @@ def do_create(access_token: str, record: dict[str, Any], location_map: dict[str,
         params=params,
         ical_uid=uid,
         sequence=seq,
-        method="REQUEST",
+        method="PUBLISH",
         ics_filename="invite.ics",
         invite_log_record=record,
         invite_log_key=key,
@@ -552,7 +552,7 @@ def do_reschedule(access_token: str, record: dict[str, Any], location_map: dict[
         params=params,
         ical_uid=uid,
         sequence=seq,
-        method="REQUEST",
+        method="PUBLISH",
         ics_filename="invite.ics",
         invite_log_record=record,
         invite_log_key=key,

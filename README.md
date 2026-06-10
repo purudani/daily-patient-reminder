@@ -353,9 +353,9 @@ To test without affecting real patients, use the dummy data generator and send a
 
 | Step | What we do | Graph API |
 |------|------------|-----------|
-| **Create** | New **UID**, SEQUENCE `0`, attach **invite.ics** | `POST .../sendMail` |
+| **Create** | New **UID**, SEQUENCE `0`, attach **invite.ics** as `METHOD:PUBLISH` so mail clients do not show RSVP buttons | `POST .../sendMail` |
 | **Storage** | Store **`ical_uid`** + **`sequence`** in `event_id_store.json` by appointment key | `set_invite_state(...)` |
-| **Reschedule** | Same **UID**, SEQUENCE+1, attach updated **invite.ics** | `POST .../sendMail` |
+| **Reschedule** | Same **UID**, SEQUENCE+1, attach updated **invite.ics** as `METHOD:PUBLISH` | `POST .../sendMail` |
 | **Cancel** / **Delete** | Same **UID**, SEQUENCE+1, attach **cancel.ics**, remove row from store | `POST .../sendMail` |
 
 Appointment key = **PN + Date + Time** (normalized). Clients that honor iCalendar updates will merge by **UID**; behavior can vary by app (Outlook, Gmail, Apple Calendar, etc.).

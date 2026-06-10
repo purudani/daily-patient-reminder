@@ -1,8 +1,8 @@
 """
 Build iCalendar (.ics) payloads for email attachments.
 
-Uses METHOD:REQUEST for new/updated appointments and METHOD:CANCEL for removals.
-New/update requests default to no RSVP so patients are not prompted to accept/decline.
+Uses METHOD:PUBLISH for new/updated appointments and METHOD:CANCEL for removals.
+Published appointment files avoid meeting RSVP controls in mail clients such as Gmail.
 Stable UID + incrementing SEQUENCE lets clients update the same calendar entry.
 """
 from __future__ import annotations
@@ -109,17 +109,18 @@ def build_ics_calendar(
     location: str,
     organizer_email: str,
     organizer_cn: str,
-    attendee_email: str,
-    attendee_cn: str,
+    attendee_email: str | None,
+    attendee_cn: str | None,
     reminder_minutes_before: int = 48 * 60,
     reminder_minutes_before_list: list[int] | None = None,
     status: str | None = None,
     request_rsvp: bool = False,
 ) -> bytes:
     """
-    Full VCALENDAR with one VEVENT. method is REQUEST or CANCEL.
+    Full VCALENDAR with one VEVENT. method is PUBLISH, REQUEST, or CANCEL.
     If status is None and method is CANCEL, STATUS:CANCELLED is added.
     request_rsvp controls whether REQUEST invites ask attendees to respond.
+    PUBLISH intentionally omits ATTENDEE so clients do not render RSVP choices.
     """
     method = method.upper()
     now_utc = datetime.now(timezone.utc)
@@ -144,21 +145,24 @@ def build_ics_calendar(
     if location.strip():
         lines.append(f"LOCATION:{_escape_ics_text(location.strip())}")
     org_cn = _cn_param_value(organizer_cn)
-    att_cn = _cn_param_value(attendee_cn or attendee_email)
     lines.append(f"ORGANIZER;CN={org_cn}:mailto:{organizer_email}")
-    attendee_partstat = "NEEDS-ACTION" if method == "REQUEST" and request_rsvp else "ACCEPTED"
-    attendee_rsvp = "TRUE" if method == "REQUEST" and request_rsvp else "FALSE"
-    lines.append(
-        f"ATTENDEE;CN={att_cn};CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;"
-        f"PARTSTAT={attendee_partstat};RSVP={attendee_rsvp}:mailto:{attendee_email}"
-    )
+    attendee_email = (attendee_email or "").strip()
+    if method in {"REQUEST", "CANCEL"} and attendee_email:
+        att_cn = _cn_param_value(attendee_cn or attendee_email)
+        attendee_partstat = "NEEDS-ACTION" if method == "REQUEST" and request_rsvp else "ACCEPTED"
+        attendee_rsvp = "TRUE" if method == "REQUEST" and request_rsvp else "FALSE"
+        lines.append(
+            f"ATTENDEE;CN={att_cn};CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;"
+            f"PARTSTAT={attendee_partstat};RSVP={attendee_rsvp}:mailto:{attendee_email}"
+        )
     if method == "CANCEL" or (status and status.upper() == "CANCELLED"):
         lines.append("STATUS:CANCELLED")
     else:
         lines.append(f"STATUS:{(status or 'CONFIRMED').upper()}")
     lines.append("TRANSP:OPAQUE")
     lines.append("X-MICROSOFT-CDO-BUSYSTATUS:BUSY")
-    if method == "REQUEST":
+    lines.append("X-MICROSOFT-DISALLOW-COUNTER:TRUE")
+    if method != "CANCEL":
         alarm_values: list[int] = []
         if reminder_minutes_before_list:
             for v in reminder_minutes_before_list:
