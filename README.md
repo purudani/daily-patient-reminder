@@ -101,10 +101,11 @@ This sends real patient emails and stores invite IDs in `event_id_store.json` fo
    - **Reschedule**: same UID, higher SEQUENCE, updated **`invite.ics`** (clients that honor SEQUENCE merge the event).
    - **Cancel** / **Delete**: short HTML + **`cancel.ics`**; then remove the stored UID.
    - Sends from `GRAPH_MAILBOX_USER` (default `reminders@libertyptnj.com`) and sets `Reply-To` to `EMAIL_REPLY_TO` (default `frontdesk@libertyptnj.com`).
+   - Retries transient Graph responses (`429`, `500`, `502`, `503`, `504`) with backoff before marking an action failed.
 
 5. **Logging**: Writes a daily log file, optional **Excel audit** (`invite_sent_log.xlsx` / `INVITE_LOG_PATH`: one row per email sent), and (optionally) logs every invite/change to the daily log file.
 
-6. **End-of-run cleanup/reporting**: On a clean `run_daily.py` run, renames processed inputs to `Excel/action_YYYY-MM-DD.xlsx` and `Excel/actual_YYYY-MM-DD.xlsx`, then sends a success/failure report to `DAILY_REPORT_EMAIL`.
+6. **End-of-run cleanup/reporting**: On a clean `run_daily.py` run, renames processed inputs to timestamped `Excel/YYYYMMDD_HHMMSS_action.xlsx` and `Excel/YYYYMMDD_HHMMSS_actual.xlsx`, then sends a success/failure report to `DAILY_REPORT_EMAIL`. If any action fails, the inputs are left in place for review.
 
 ---
 
@@ -371,6 +372,9 @@ Appointment key = **PN + Date + Time** (normalized). Clients that honor iCalenda
 - **`LOG_INVITES_AND_CHANGES`**: set `True` in config to log every invite/change sent to the daily log file.
 - **`INVITE_LOG_PATH`**: Excel audit file (one row per email); set empty to disable.
 - **`REMINDER_MINUTES_BEFORE`**: first value is used for the calendar reminder (e.g. 48 hours); see limitations below.
+- **`GRAPH_MAIL_TIMEOUT_SECONDS`**: Graph `sendMail` request timeout; default `60`.
+- **`GRAPH_MAIL_MAX_ATTEMPTS`**: total tries for transient Graph send failures; default `3`. Keep this modest because a timed-out `sendMail` call can sometimes still be accepted by Graph.
+- **`GRAPH_MAIL_RETRY_BACKOFF_SECONDS`**: first retry delay; default `5`, doubling on each retry unless Graph sends `Retry-After`.
 
 ---
 

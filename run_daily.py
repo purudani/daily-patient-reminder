@@ -344,6 +344,12 @@ def main() -> int:
         )
         if exit_code == 0:
             archived_reports = archive_processed_reports(logger)
+        else:
+            logger.warning(
+                "Skipping processed report archiving because %d action(s) failed; "
+                "input files were left in place for review.",
+                errors,
+            )
     except FileNotFoundError as e:
         error_message = f"File not found: {e}"
         logger.error("%s", error_message)

@@ -8,6 +8,23 @@ from __future__ import annotations
 
 import os
 
+
+def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, value)
+
+
+def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, value)
+
+
 # --- Rooted folders ---
 ROOT_FOLDER = os.path.abspath(
     os.path.expanduser(
@@ -191,6 +208,13 @@ GRAPH_SCOPES = [
     "https://graph.microsoft.com/User.Read",
 ]
 GRAPH_APP_ONLY_SCOPE = ["https://graph.microsoft.com/.default"]
+GRAPH_MAIL_TIMEOUT_SECONDS = _env_int("GRAPH_MAIL_TIMEOUT_SECONDS", 60, min_value=1)
+GRAPH_MAIL_MAX_ATTEMPTS = _env_int("GRAPH_MAIL_MAX_ATTEMPTS", 3, min_value=1)
+GRAPH_MAIL_RETRY_BACKOFF_SECONDS = _env_float(
+    "GRAPH_MAIL_RETRY_BACKOFF_SECONDS",
+    5.0,
+    min_value=0.0,
+)
 
 # --- Logging ---
 LOG_INVITES_AND_CHANGES = True  # log every invite/change sent
