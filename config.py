@@ -38,7 +38,7 @@ SIMULATION_FOLDER = os.path.join(ROOT_FOLDER, "simulations")
 # Action/Actual/Mailchimp workbooks live under Excel/.
 ACTION_REPORT_PATH = os.path.join(EXCEL_FOLDER, "action.xlsx")
 ACTUAL_REPORT_PATH = os.path.join(EXCEL_FOLDER, "actual.xlsx")
-MAILCHIMP_EXPORT_PATH = os.path.join(EXCEL_FOLDER, "processed_mailchimp_export.xlsx")
+MAILCHIMP_EXPORT_PATH = os.path.abspath(os.path.expanduser(os.environ.get("MAILCHIMP_EXPORT_PATH", os.path.join(EXCEL_FOLDER, "processed_mailchimp_export.xlsx"))))
 
 # After a successful run_daily.py run, archive the processed Action/Actual input
 # files in Excel/ as YYYYMMDD_HHMMSS_action.xlsx (timestamp prefix for automation).
