@@ -10,6 +10,7 @@ Data flow:
   The outgoing slot uses the matched Actual row; action still comes from Action. See BUSINESS_LOGIC.md.
 - Reschedule Into is parsed for new date/time when not using that has_newer path; falls back to legacy columns.
 - Actions like "CANCEL w. remove" normalize to cancel.
+- When Action is cancel/delete and Has newer matches an Actual row whose Action is RESTORE, skip (no cancel email).
 - Location codes → full address via config.LOCATION_MAP.
 - Mailchimp: PN + Email + optional First/Last (or Name).
 """
@@ -160,6 +161,13 @@ def _normalize_action(raw: str) -> str | None:
     if s.startswith("cancel"):
         return "cancel"
     return None
+
+
+def _is_restore_action(val: Any) -> bool:
+    """True when the scheduler Actual row Action is RESTORE (appointment was un-cancelled)."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return False
+    return str(val).strip().lower() == "restore"
 
 
 def _actual_column(date_col: str | None, fallback: str) -> str:
@@ -793,6 +801,32 @@ def evaluate_daily_actions() -> dict[str, list[dict[str, Any]]]:
                         )
                     )
                     continue
+
+        if (
+            need_actual_lookup
+            and actual_row is not None
+            and action in (*ACTIONS_CANCEL, *ACTIONS_DELETE)
+        ):
+            acols = actual_cols_list or cols
+            if _is_restore_action(_cell_value(actual_row, COL_ACTION, acols)):
+                ad_col = _actual_column(ACTUAL_COL_DATE, COL_APPT_DATE)
+                at_col = _actual_column(ACTUAL_COL_TIME, COL_APPT_TIME)
+                decisions.append(
+                    _decision_row(
+                        idx,
+                        action_val,
+                        action,
+                        pn,
+                        "skip",
+                        "cancel: Actual action is RESTORE",
+                        has_newer=has_newer,
+                        used_actual=True,
+                        appt_date=str(_parse_date(_cell_value(actual_row, ad_col, acols)) or ""),
+                        appt_time=str(_parse_time_optional(_cell_value(actual_row, at_col, acols)) or ""),
+                        patient_name=row_patient_name,
+                    )
+                )
+                continue
 
         use_reschedule_cols = action in ACTIONS_RESCHEDULE and not need_actual_lookup
 
