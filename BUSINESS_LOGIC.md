@@ -151,7 +151,7 @@ Output record
 |               OR Reschedule Date
 |               OR Action.Date
 +-- appt_time -> Reschedule Into parsed time
-|               OR Reschedule Time
+|               OR valid Reschedule Time
 |               OR Action.Time
 +-- location -> Action.Location
 +-- location_address -> LOCATION_MAP[location]
@@ -220,7 +220,7 @@ Normalize action:
 Normalize time:
 - 04:30p -> 16:30:00
 - 11:30a -> 11:30:00
-- blanks/unparseable values default through time normalizer rules
+- optional blank/unparseable values are ignored so fallback chains can use the source appointment time
 
 Map location:
 - LIB  -> 115 Columbus Dr, Ste 300, Jersey City, NJ 07302

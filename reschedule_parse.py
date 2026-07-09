@@ -28,10 +28,10 @@ def _time_12h_to_24h(s: str) -> str | None:
     return f"{h:02d}:{mi:02d}:00"
 
 
-def normalize_time_value(val: Any) -> str:
-    """Normalize Excel time to 'HH:MM:SS' (24h). Handles 12h suffix, datetime, Excel time."""
+def try_normalize_time_value(val: Any) -> str | None:
+    """Normalize Excel time to 'HH:MM:SS' (24h), or return None when no usable time exists."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
-        return "09:00:00"
+        return None
     if hasattr(val, "hour") and hasattr(val, "minute") and not isinstance(val, str):
         try:
             return f"{val.hour:02d}:{val.minute:02d}:{getattr(val, 'second', 0):02d}"
@@ -39,7 +39,7 @@ def normalize_time_value(val: Any) -> str:
             pass
     s = str(val).strip()
     if not s:
-        return "09:00:00"
+        return None
     t24 = _time_12h_to_24h(s)
     if t24:
         return t24
@@ -50,10 +50,18 @@ def normalize_time_value(val: Any) -> str:
         if ":" in s and len(s) >= 5:
             parts = s.split(":")
             if len(parts) >= 2:
-                h, m = int(parts[0]), int(parts[1])
-                sec = int(parts[2]) if len(parts) > 2 else 0
-                return f"{h:02d}:{m:02d}:{sec:02d}"
-        return "09:00:00"
+                try:
+                    h, m = int(parts[0]), int(parts[1])
+                    sec = int(parts[2]) if len(parts) > 2 else 0
+                    return f"{h:02d}:{m:02d}:{sec:02d}"
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+
+def normalize_time_value(val: Any) -> str:
+    """Normalize Excel time to 'HH:MM:SS' (24h). Handles 12h suffix, datetime, Excel time."""
+    return try_normalize_time_value(val) or "09:00:00"
 
 
 def parse_reschedule_into(text: Any) -> tuple[str | None, str | None]:

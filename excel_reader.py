@@ -65,7 +65,7 @@ from config import (
     SKIP_NEXT_DAY,
     SKIP_SAME_DAY,
 )
-from reschedule_parse import normalize_time_value, parse_reschedule_into
+from reschedule_parse import normalize_time_value, parse_reschedule_into, try_normalize_time_value
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +264,7 @@ def _parse_time_optional(val: Any) -> str | None:
     s = str(val).strip()
     if not s:
         return None
-    return _parse_time(val)
+    return try_normalize_time_value(val)
 
 
 def _reschedule_unchanged(
@@ -539,7 +539,7 @@ def _action_row_to_record(
             rinfo = _reschedule_into_value(row, cols)
             nd, nt = parse_reschedule_into(rinfo)
             date_str = nd or _parse_date(_cell_value(row, COL_RESCHEDULE_DATE, cols)) or base_date
-            time_str = nt or _parse_time(_cell_value(row, COL_RESCHEDULE_TIME, cols)) or base_time
+            time_str = nt or _parse_time_optional(_cell_value(row, COL_RESCHEDULE_TIME, cols)) or base_time
         else:
             date_str = base_date
             time_str = base_time
